@@ -97,6 +97,39 @@ final class DestinationValidatorTest extends TestCase
         ];
     }
 
+    /**
+     * B31 — IP ter-obfuscation yang dinormalisasi browser menjadi 127.0.0.1.
+     *
+     * Ditemukan lewat uji tembak payload: bentuk desimal/hex/oktal/pendek
+     * LOLOS `FILTER_VALIDATE_IP` (dianggap hostname biasa), padahal browser
+     * membukanya sebagai loopback. Terbukti dengan WHATWG URL:
+     *   new URL('http://2130706433/').hostname === '127.0.0.1'
+     * Jadi penyerang bisa menyimpan tujuan yang tampak publik tapi internal.
+     *
+     * @return array<int, array{0: string, 1: string}>
+     */
+    public static function obfuscatedLoopbackTargets(): array
+    {
+        return [
+            ['http://2130706433/', 'desimal 127.0.0.1'],
+            ['http://0x7f000001/', 'hex 127.0.0.1'],
+            ['http://017700000001/', 'oktal 127.0.0.1'],
+            ['http://127.1/', 'IPv4 bentuk pendek'],
+            ['http://0/', '0.0.0.0 bentuk pendek'],
+            ['http://127.0.1/', 'IPv4 tiga oktet'],
+            ['http://0x7f.1/', 'hex campur pendek'],
+        ];
+    }
+
+    #[DataProvider('obfuscatedLoopbackTargets')]
+    public function test_menolak_loopback_ter_obfuscation(string $url, string $alasan): void
+    {
+        self::assertFalse(
+            $this->v->isValid($url),
+            "BYPASS: bentuk {$alasan} lolos, padahal browser membukanya sebagai loopback: {$url}",
+        );
+    }
+
     public function test_kosong_ditolak(): void
     {
         self::assertFalse($this->v->isValid(''));
