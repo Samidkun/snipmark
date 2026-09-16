@@ -146,19 +146,49 @@ elif [ "$TIER" = "t0" ]; then
   printf '\n--- e2e/a11y/perf: SKIP (tier t0) ---\n'
 else
   if [ -f playwright.config.ts ] || [ -f playwright.config.js ]; then
-    if [ -f e2e/a11y.spec.ts ] && ! ls node_modules/@axe-core >/dev/null 2>&1; then
+    # a11y dijalankan sebagai gate SENDIRI (bukan tenggelam di dalam "e2e"), supaya
+    # kegagalan aksesibilitas terlihat sebagai a11y — bukan sebagai "e2e gagal".
+    if [ -f e2e/a11y.spec.ts ] && ls node_modules/@axe-core >/dev/null 2>&1; then
+      gate "a11y" "" npx playwright test e2e/a11y.spec.ts
+    elif [ -f e2e/a11y.spec.ts ]; then
       RESULTS+=("SKIP  a11y — @axe-core/playwright not installed (npm i -D @axe-core/playwright)")
       printf '\n--- a11y: SKIP (dependency missing) ---\n'
-      gate "e2e" "" npx playwright test e2e/smoke.spec.ts
-    else
-      gate "e2e" "" npx playwright test
     fi
+    gate "e2e" "" npx playwright test
   else
     RESULTS+=("SKIP  e2e — no playwright config")
     printf '\n--- e2e: SKIP (no playwright config) ---\n'
   fi
+
+  # perf: Lighthouse butuh SERVER HIDUP. Tanpa ini, Lighthouse menabrak halaman
+  # error dan melaporkan CHROME_INTERSTITIAL_ERROR — gate yang selalu merah bukan
+  # gate, dan orang akan belajar mengabaikannya. Port harus SAMA dengan
+  # .lighthouserc.json (8899), bukan 3000 (itu port Vite, bukan Laravel).
   if [ -f .lighthouserc.json ]; then
-    gate "perf" "" npx --yes @lhci/cli autorun
+    LH_PORT=8899
+    LH_URL="http://127.0.0.1:${LH_PORT}/"
+    if curl -s -o /dev/null --max-time 2 "$LH_URL"; then
+      gate "perf" "" npx --yes @lhci/cli autorun
+    else
+      printf '\n--- perf: menyalakan server Laravel di :%s ---\n' "$LH_PORT"
+      php artisan serve --port="$LH_PORT" > /tmp/local-ci-serve.log 2>&1 &
+      LH_SRV=$!
+      # Tunggu server siap (health check, bukan sleep buta).
+      LH_READY=0
+      for _ in $(seq 1 20); do
+        if curl -s -o /dev/null --max-time 2 "$LH_URL"; then LH_READY=1; break; fi
+        sleep 0.5
+      done
+      if [ "$LH_READY" = 1 ]; then
+        gate "perf" "" npx --yes @lhci/cli autorun
+      else
+        RESULTS+=("FAIL  perf — server Laravel tidak siap di :$LH_PORT")
+        printf '\nFAIL perf: server tidak siap di %s (lihat /tmp/local-ci-serve.log)\n' "$LH_URL"
+        fail=1
+      fi
+      kill "$LH_SRV" 2>/dev/null || true
+      wait "$LH_SRV" 2>/dev/null || true
+    fi
   else
     RESULTS+=("SKIP  perf — no .lighthouserc.json")
   fi
