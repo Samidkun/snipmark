@@ -1,4 +1,18 @@
 <div>
+    {{--
+        JUDUL HALAMAN (h1) WAJIB ada di sini, bukan di layout.
+
+        Sebelumnya layout memberi default `@yield('heading', 'Tautan')`. Nilai
+        default itu DIHAPUS karena komponen Livewire tidak bisa mengisi `@yield`
+        (B28) — dan efek sampingnya, halaman ini kehilangan h1 sama sekali.
+        Tanpa h1, pembaca layar tidak punya penanda halaman, dan struktur
+        dokumen tidak punya tingkatan teratas (h2 di bawah tanpa h1).
+
+        Karena itu h1 dipasang di dalam komponen, tempat Livewire benar-benar
+        merender.
+    --}}
+    <h1 class="sr-only">Analitik tautan /c/{{ $link->code }}</h1>
+
     <div class="mb-5 flex flex-wrap items-center gap-3">
         <a href="{{ route('dashboard') }}" class="btn btn-ghost">← Kembali</a>
         <code class="font-mono text-sm text-accent-300">{{ url('/c/'.$link->code) }}</code>

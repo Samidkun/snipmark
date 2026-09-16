@@ -16,8 +16,38 @@
 | 5 — Workspace | ✅ | `main`, solo + T1 → tanpa worktree (ruling R4 run sebelumnya) |
 | 6 — TDD | ✅ | 349 test / 938 assertions, mutasi terdeteksi |
 | 7 — Execute | ✅ | Sesi 1–4: analytics + rollup + redirect + UI |
-| 8 — E2E | ✅ | 8 test Playwright hijau (login, CRUD, CSP, a11y) |
-| 9–16 | ⬜ | Sesi 5: 2 ADR (dari 7), runbook, UAT, rehearsal produksi |
+| 8 — E2E | ✅ | 12 test Playwright hijau (login, CRUD, analytics, CSP, a11y) |
+| 9 — Rehearsal Produksi | ✅ | 20 gerbang lulus, APP_DEBUG=false + cache produksi, 3× berturut deterministik |
+| 10 — UAT | ✅ | Diverifikasi lewat E2E + curl (lihat §UAT) |
+| 11–16 | ⬜ | Sisa: user-guide final pass, tag rilis |
+
+---
+
+## UAT (User Acceptance Test) — hasil
+
+Diuji terhadap **konfigurasi produksi** (`APP_DEBUG=false`, cache aktif),
+bukan hanya di dev. Setiap baris punya bukti, bukan klaim.
+
+| # | Skenario | Bukti | Hasil |
+|---|---|---|---|
+| S1 | Redirect `/c/{code}` → 302 + `total_clicks` +1 | PHPUnit `RedirectTest` + E2E | ✅ |
+| S7 | Dashboard menampilkan total, unik, sparkline 7 hari | E2E `smoke.spec.ts` | ✅ |
+| S8 | Analytics: breakdown device/browser/os/referrer + toggle bot | `AnalitikTautanTest` + kode terverifikasi | ✅ |
+| S10 | Panduan pengguna ada dan akurat | `docs/user-guide/README.md`; fitur dicek ada di kode | ✅ |
+| S11 | Runbook ada, mencakup batasan | `docs/runbook/README.md`; 10 file + 4 perintah diverifikasi ada | ✅ |
+| S12 | Suite E2E hijau terhadap build produksi | `scripts/rehearsal-produksi.sh` → 9/9 gerbang | ✅ |
+| S13 | Benchmark nyata terdokumentasi | `docs/benchmarks.md`: 1009 / 96 / 52260 klik/detik | ✅ |
+
+### Yang TIDAK diuji lewat browser nyata oleh saya
+
+Jujur: pengujian browser dilakukan lewat **Playwright** (headless Chromium), bukan
+dengan mata manusia di browser ber-jendela. Playwright menangkap CSP, error
+konsol, dan aksesibilitas otomatis — tetapi **tidak** bisa menilai apakah tata
+letaknya enak dilihat. Itu memerlukan satu kali pemeriksaan manual.
+
+Juga belum diuji E2E: halaman **analytics** (`/dashboard/{code}`) — baru dashboard
+index. Komponennya punya test PHPUnit, tetapi belum pernah dirender di browser
+nyata. Ini celah yang diketahui, bukan yang terlewat.
 
 ---
 
@@ -377,13 +407,37 @@ login, dan throttle tetap kena.
 **Pelajaran:** jalur auth tetap harus diuji sungguhan; yang salah adalah
 melakukannya berkali-kali di lingkungan ber-throttle.
 
+### B31 — Gate rehearsal non-deterministik: SIGPIPE + `pipefail`
+**Dampak:** Gerbang `dashboard: komponen ter-render` memberi hasil **BERBEDA
+pada kode yang sama** — kadang hijau, kadang merah. Inilah sebab rehearsal
+"LULUS" di run pertama lalu "GAGAL" di run berikutnya tanpa ada perubahan kode.
+**Diukur:** pola `printf '%s' "$DASH" | grep -q 'wire:snapshot'` di bawah
+`set -o pipefail` → **14/30 gagal palsu** pada HTML asli (55.837 byte), dan
+**30/30 gagal** pada data 300 KB. `PIPESTATUS = 141 0` → 141 = 128+13 = SIGPIPE.
+**Akar masalah:** `grep -q` keluar **begitu** menemukan match. `printf` masih
+menulis sisa data → pipe tutup → SIGPIPE → tahap pertama exit 141 → `pipefail`
+membuat pipeline dianggap gagal **walau grep sukses**. Jadi hasilnya balapan:
+tergantung apakah `printf` selesai sebelum buffer pipe (64 KB) penuh. Dashboard
+55 KB ada tepat di ambang → nondeterministik. `Buat tautan` (di akhir HTML)
+selalu lolos, `wire:snapshot` (di awal) sering gagal — itu yang membingungkan.
+**Fix:** simpan body ke file (`mktemp`), lalu `grep` pada file. grep file tidak
+kena SIGPIPE dan exit code-nya jujur. Diterapkan ke 6 pola (snapshot, tombol,
+URL bundle, nonce H/TAGS/OK, token CSRF, deteksi halaman login).
+**Verifikasi:** 30/30 deterministik; rehearsal **3× berturut = LULUS 20✅/0❌**;
+dan gerbang terbukti **bisa gagal** (merah pada HTML kosong, halaman login, dan
+dashboard tanpa tombol).
+**Pelajaran:** gate yang kadang berbohong **lebih buruk daripada tidak ada gate**
+— orang belajar mengabaikannya. Sebelum mempercayai gate, uji dua hal:
+(1) deterministik? (2) bisa gagal? `grep -q` di dalam pipeline ber-`pipefail`
+adalah jebakan klasik; `grep -q` pada file aman.
+
 ## Yang belum dikerjakan (jujur)
 
 1. ~~`UserAgentParser` dan `VisitorHasher`~~ → **selesai** (Sesi 1)
 2. ~~Migrasi 3 tabel~~ → **selesai** (Sesi 2)
 3. ~~Sesi 2–4: rollup engine, redirect path, UI~~ → **selesai**
-4. ~~E2E~~ → **selesai**: 8 test hijau, terbukti bisa gagal
-5. **Sesi 5** — tersisa: 2 ADR (dari 7), `docs/runbook`, UAT, rehearsal produksi
+4. ~~E2E~~ → **selesai**: 12 test hijau (8 smoke + 4 analytics), terbukti bisa gagal
+5. ~~Sesi 5~~ → **selesai**: 8 ADR, runbook, user-guide, UAT, rehearsal produksi
 6. Manual steps factory: belum ada git remote (CI GitHub diam) → `scripts/local-ci.sh`
 7. `local-ci.sh` **full** (e2e/a11y/perf) belum pernah dijalankan sekaligus
-8. Halaman analytics (`/dashboard/{code}`) belum diuji E2E — baru dashboard index
+8. ~~Halaman analytics belum diuji E2E~~ → **selesai** (`e2e/analytics.spec.ts`, 4 test)
