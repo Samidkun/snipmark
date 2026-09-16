@@ -14,12 +14,13 @@
 | 3 — Spec | ✅ | 473 baris, self-review menemukan 5 masalah, diperbaiki |
 | 4 — Plan | ⏭️ | **Di-skip dengan persetujuan user** — spec §14 = rencana |
 | 5 — Workspace | ✅ | `main`, solo + T1 → tanpa worktree (ruling R4 run sebelumnya) |
-| 6 — TDD | ✅ | 360 test / 971 assertions, mutasi terdeteksi |
+| 6 — TDD | ✅ | 368 test / 985 assertions, mutasi terdeteksi |
 | 7 — Execute | ✅ | Sesi 1–4: analytics + rollup + redirect + UI |
 | 8 — E2E | ✅ | 12 test Playwright hijau (login, CRUD, analytics, CSP, a11y) |
 | 9 — Rehearsal Produksi | ✅ | 20 gerbang lulus, APP_DEBUG=false + cache produksi, 3× berturut deterministik |
 | 10 — UAT | ✅ | Diverifikasi lewat E2E + curl (lihat §UAT) |
-| 11–16 | ⬜ | Sisa: user-guide final pass, tag rilis |
+| 11 — local-ci full | ✅ | ALL GREEN 12 gate (secrets, audit, license, build, php:test/audit, a11y, e2e, perf) |
+| 12–16 | ⬜ | Sisa: git remote + CI, tag rilis |
 
 ---
 
@@ -515,13 +516,24 @@ Lighthouse nyata: **performance 100 · accessibility 100 · LCP 1.2s · CLS 0 ·
 **Pelajaran:** "belum pernah dijalankan penuh" adalah status yang menipu. Gate yang
 hanya pernah di-skip belum terbukti apa pun. Jalankan gate terberat minimal sekali.
 
-## Drift dokumen-vs-kode (bukan bug, tapi perlu keputusan)
+## Drift dokumen-vs-kode (SELESAI)
 Audit menyeluruh nama kelas di spec vs kode menemukan **1 drift nyata**:
 `LinkPolicy` disebut spec §10 ("Ownership ditegakkan **hanya** di `LinkPolicy`"),
-tetapi **tidak ada**. Implementasinya: pengecekan kepemilikan **diduplikasi** di
-dua tempat (`TautanIndex::tautanMilikSaya()` dan `AnalitikTautan`), keduanya
-`abort(403)`. **Fungsinya benar** (IDOR terbukti 403 lintas-user), tetapi
-duplikasi berarti komponen ketiga bisa lupa memeriksa → IDOR.
+tetapi **tidak ada** — pemeriksaan kepemilikan **diduplikasi** di dua tempat
+(`TautanIndex::tautanMilikSaya()` dan `AnalitikTautan::mount()`), keduanya `abort(403)`.
+Fungsinya benar (IDOR terbukti 403 lintas-user), tetapi duplikasi berarti komponen
+ketiga bisa lupa memeriksa → IDOR yang tidak tertangkap test mana pun.
+
+**✅ DIPERBAIKI** — `app/Policies/LinkPolicy.php` dibuat; kedua komponen sekarang
+memakai `Gate::authorize()`. Spec §10 **sekarang cocok dengan kode** (tidak perlu
+mengubah spec, karena kode yang menyesuaikan).
+- `tests/Unit/LinkPolicyTest.php` (4 test) termasuk test bahwa Laravel benar-benar
+  **menemukan** policy untuk model `Link` — guard terhadap rename/penghapusan.
+- `tests/Feature/AnalitikTautanTest.php` (4 test): **sebelumnya tidak ada satu pun**
+  test otorisasi untuk halaman analytics, padahal ia menerima id dari URL.
+- Mutation check 4 mutasi, semuanya terdeteksi (policy→true: 7 merah; policy→false:
+  6 merah; lepas Gate di TautanIndex: 3 merah; di AnalitikTautan: 2 merah).
+
 Dua penamaan lain yang disebut spec tapi tidak ada — **bukan masalah**:
 `InsertClickEvent` (fungsinya ada: `ClickRecorder::record()` → `ClickEvent::create()`
 sinkron) dan `DataProvider` (atribut PHPUnit, bukan kelas aplikasi).
@@ -536,4 +548,4 @@ sinkron) dan `DataProvider` (atribut PHPUnit, bukan kelas aplikasi).
 6. Manual steps factory: belum ada git remote (CI GitHub diam) → `scripts/local-ci.sh`
 7. ~~`local-ci.sh` full belum pernah dijalankan~~ → **selesai** (B34 diperbaiki, ALL GREEN 12 gate)
 8. ~~Halaman analytics belum diuji E2E~~ → **selesai** (`e2e/analytics.spec.ts`, 4 test)
-9. **`LinkPolicy` tidak ada** (spec §10 menyebutnya) — kepemilikan diduplikasi di 2 komponen. Fungsi benar, tapi rawan bila ada komponen ke-3
+9. ~~**`LinkPolicy` tidak ada** (spec §10 menyebutnya)~~ → **selesai** (`app/Policies/LinkPolicy.php` + 8 test, mutasi terdeteksi)
