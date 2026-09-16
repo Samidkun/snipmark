@@ -16,7 +16,8 @@
 | 5 — Workspace | ✅ | `main`, solo + T1 → tanpa worktree (ruling R4 run sebelumnya) |
 | 6 — TDD | ✅ | 349 test / 938 assertions, mutasi terdeteksi |
 | 7 — Execute | ✅ | Sesi 1–4: analytics + rollup + redirect + UI |
-| 8–16 | ⬜ | Sesi 5: docs + E2E + UAT + production rehearsal |
+| 8 — E2E | ✅ | 8 test Playwright hijau (login, CRUD, CSP, a11y) |
+| 9–16 | ⬜ | Sesi 5: 2 ADR (dari 7), runbook, UAT, rehearsal produksi |
 
 ---
 
@@ -303,14 +304,86 @@ SETIAP tag `<script>` pada response yang **sama** (6 test, 21 assertions).
 tempat yang salah. (2) Alat ukur harus diuji sebelum kesimpulannya dipercaya; dua
 request berbeda memang menghasilkan nonce berbeda.
 
+### B26 — Layout membuang isi komponen Livewire (halaman kosong tanpa error)
+**Dampak:** `/dashboard` mengembalikan HTTP 200, layout lengkap (sidebar, judul),
+tetapi **isi komponen hilang seluruhnya**. Tidak ada error, tidak ada peringatan.
+**Penyebab:** Livewire membungkus komponen full-page dengan
+`@section($slotOrSection)`, dan **nilai default `slotOrSection` adalah `'slot'`** —
+bukan `'content'`. Layout hanya menyediakan `@yield('content')`, jadi hasil render
+komponen dibuang.
+**Kenapa 349 test PHPUnit tidak melihatnya:** test Livewire memakai
+`Livewire::test(Komponen::class)`, yang memanggil komponen secara langsung dan
+**tidak pernah menyentuh layout**. Seluruh test hijau sementara halaman produksi
+kosong.
+**Fix:** layout melayani ketiga jalur — `@yield('content')` (view auth),
+`$slot` (komponen Blade), dan `@yield('slot')` (Livewire full-page).
+**Ditemukan lewat:** E2E di browser nyata. Ini alasan E2E ada.
+
+### B27 — CSP memblokir evaluator Livewire (semua tombol mati)
+**Dampak:** `window.Livewire` ada, tetapi `Livewire.all()` berisi **0 komponen**.
+Setiap klik tidak menghasilkan request. Tidak ada error di UI.
+**Gejala di konsol:** `EvalError: Evaluating a string as JavaScript violates CSP
+because 'unsafe-eval' is not an allowed source` — di `normalRawEvaluator`
+(livewire.js:1606), dipanggil dari `x-on:click`.
+**Penyebab:** bundle Livewire standar menerjemahkan ekspresi Alpine dengan
+`new Function()` (= eval). CSP produksi aplikasi ini tidak mengizinkan
+`'unsafe-eval'` — dan memang tidak boleh, itu membuka XSS.
+**Fix:** `csp_safe => true` di `config/livewire.php` → Livewire menyajikan
+`livewire.csp.js` (evaluator berbasis parser). **BUKAN** menambahkan
+`'unsafe-eval'`.
+**Bukti:** bundle yang disajikan 722.303 byte = `livewire.csp.js`, 0 kemunculan
+`new Function()`. `Livewire.all()` = 1 (sebelumnya 0).
+
+### B28 — Tombol aksi dibuang karena `@yield` tidak bisa diisi komponen
+**Dampak:** tombol "+ Buat" tidak pernah muncul. Pengguna **tidak punya cara
+membuat tautan sama sekali** — aplikasinya tidak berguna.
+**Penyebab:** judul dan tombol didefinisikan lewat `@section('actions')` di
+layout, padahal `@yield` hanya menerima isi dari `@section` milik view yang
+`@extends`. Komponen Livewire tidak bisa mengisi `@yield`. Yang tampil hanya
+**nilai default** `@yield('heading', 'Tautan')` — judul yang tidak pernah diminta
+komponennya.
+**Fix:** header dan tombol dipindah KE DALAM komponen. Tombol dibuat SELALU ada,
+bukan hanya di empty-state (sebelumnya pengguna yang sudah punya tautan tidak
+punya jalan menambah lagi).
+
+### B29 — Dua gerbang palsu di E2E (dua-duanya mengukur alat, bukan aplikasi)
+**Gerbang palsu #1:** membandingkan nonce lewat `curl -sI` (HEAD) dengan
+`curl -s` (GET). Dua request berbeda **memang** menghasilkan nonce berbeda —
+perbandingan itu selalu "beda" dan menyimpulkan bug yang tidak ada. Harus SATU
+response yang sama (`curl -D -`).
+**Gerbang palsu #2:** memeriksa CSP lewat `new Function()` di dalam
+`page.evaluate()`. **Terukur:** `new Function('return 1')()` mengembalikan 1
+bahkan saat CSP aktif, karena `page.evaluate` berjalan di konteks yang
+di-inject DevTools dan tidak tunduk CSP halaman. Test itu **selalu hijau** —
+tidak mengukur apa pun. Diganti: cek script inline TANPA nonce benar-benar
+ditolak browser (itu bukti CSP ditegakkan), dan uji AKIBATNYA (aksi harus sampai
+ke server).
+**Gerbang palsu #3:** skrip cek bundle mencetak "✅ CSP-SAFE" padahal body JS
+**0 byte** (fetch gagal) — `grep -c` pada string kosong mengembalikan 0, identik
+dengan "tidak ada evaluasi string". Ketiadaan bukti diperlakukan sebagai bukti
+ketiadaan. Fix: tolak hijau bila body < 1000 byte.
+**Pelajaran:** sebelum mempercayai sebuah gate, buktikan gate itu **bisa gagal**.
+Ini kelas bug yang sama dengan B7 dan B24.
+
+### B30 — Test paralel menabrak throttle login Fortify (HTTP 429)
+**Dampak:** 7 test paralel, masing-masing login sendiri → percobaan ke-6 dan
+seterusnya menerima 429. Kegagalannya menyesatkan: test gagal di
+`waitForURL(/dashboard/)` seolah-olah login rusak, padahal aplikasi benar.
+**Diukur:** `POST /login` berturut-turut → 1..5 = 302, 6..8 = 429.
+**Fix:** login SEKALI di `globalSetup` (berjalan sebelum worker mana pun),
+simpan state sesi, setiap test memuatnya. Login di dalam fixture **tidak bisa**
+dipakai — beberapa worker memeriksa "file sesi belum ada" bersamaan, semuanya
+login, dan throttle tetap kena.
+**Pelajaran:** jalur auth tetap harus diuji sungguhan; yang salah adalah
+melakukannya berkali-kali di lingkungan ber-throttle.
+
 ## Yang belum dikerjakan (jujur)
 
 1. ~~`UserAgentParser` dan `VisitorHasher`~~ → **selesai** (Sesi 1)
 2. ~~Migrasi 3 tabel~~ → **selesai** (Sesi 2)
 3. ~~Sesi 2–4: rollup engine, redirect path, UI~~ → **selesai**
-4. **Sesi 5** — satu-satunya yang tersisa: 2 ADR (dari 7), `docs/runbook`, E2E
-   (masih scaffold kosong), UAT, production rehearsal
-5. Manual steps factory: belum ada git remote (CI GitHub diam) → `scripts/local-ci.sh`
-6. `local-ci.sh` **full** (e2e/a11y/perf) belum pernah dijalankan — E2E belum ada isinya
-7. Halaman auth baru diperiksa lewat HTML/header, **belum** lewat browser nyata
-   (`browser_exec` butuh approval manual)
+4. ~~E2E~~ → **selesai**: 8 test hijau, terbukti bisa gagal
+5. **Sesi 5** — tersisa: 2 ADR (dari 7), `docs/runbook`, UAT, rehearsal produksi
+6. Manual steps factory: belum ada git remote (CI GitHub diam) → `scripts/local-ci.sh`
+7. `local-ci.sh` **full** (e2e/a11y/perf) belum pernah dijalankan sekaligus
+8. Halaman analytics (`/dashboard/{code}`) belum diuji E2E — baru dashboard index
