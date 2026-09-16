@@ -32,10 +32,13 @@
 | `App\Support\ParsedUserAgent` | ✅ | bucket + enum sinkron |
 | `App\Support\UserAgentParser` | ✅ | 13 UA nyata + 5 jebakan urutan |
 | `App\Support\VisitorHasher` | ✅ | HMAC, rotasi harian, bukan digest polos |
-| Migrasi 3 tabel | ⬜ | sesi berikutnya |
+| Migrasi 3 tabel + model | ✅ | `SchemaTest` 10 test |
+| `Link` (kode race-safe + isReachable) | ✅ | `LinkCodeGenerationTest` 6 + `LinkBehaviorTest` 14 |
+| `ClickEvent` (append-only, UA truncate) | ✅ | mutator + test |
+| `LinkDailyRollup` | ✅ | UNIQUE(link,date) teruji |
 
-**Test:** 147 passed / 432 assertions
-**Mutation check:** 13/13 terdeteksi (BotDetector 4/4, Support classes 9/9)
+**Test:** 176 passed / 484 assertions
+**Mutation check:** 19/19 terdeteksi
 **Gate lokal:** `local-ci.sh --fast` → **ALL GREEN**
 
 ---
@@ -98,6 +101,31 @@ tulis di phpunit.xml), warning itu membuat proses keluar 1.
 variabel undefined sehingga test GAGAL beneran — itu bukan B7). Reproduksi yang benar
 memerlukan body yang **tidak** menyentuh param ekstra, sehingga test tetap lolos
 dan hanya warning yang tersisa.
+
+### B8 — Mutation check menemukan 2 mutasi lolos: `isReachable()` TANPA TEST SAMA SEKALI
+**Dampak:** logika kelayakan-redirect (aktif + belum kedaluwarsa) tidak dilindungi
+test apa pun. Link kedaluwarsa bisa tetap membuka — bug yang baru terlihat setelah
+tautan dipakai orang.
+**Penyebab:** saya menulis `isReachable()` sebagai "metode kecil yang jelas" dan
+melewatinya. Itu pelanggaran IRON LAW: kode produksi tanpa test gagal lebih dulu.
+**Fix:** `LinkBehaviorTest` (14 test) termasuk batas kedaluwarsa tepat-sekarang.
+
+### B9 — `user_agent` TIDAK dipotong -> redirect 500 untuk UA panjang
+**Dampak:** MariaDB menolak insert (`Data too long for column 'user_agent'`) ->
+**setiap kunjungan dengan UA > 512 char gagal redirect dengan HTTP 500.**
+**Penyebab:** kolom dibatasi 512, tapi tidak ada yang memotong. Ditemukan oleh test
+yang saya tulis setelah mencurigai batas kolom — bukan oleh review.
+**Fix:** mutator `Attribute` di `ClickEvent`, satu tempat, bukan diserahkan ke pemanggil.
+
+### B10 — Runner mutasi sendiri melaporkan "GREEN" untuk suite yang MERAH
+**Dampak:** 3 mutasi dilaporkan "tidak terdeteksi" padahal suite-nya jelas merah —
+hampir menyimpulkan test tidak punya gigi.
+**Penyebab:** `laravel/pao` hanya mengeluarkan JSON bila ada TTY. Lewat `subprocess`
+(tanpa TTY) output-nya human-readable, sehingga parser JSON gagal dan runner
+menyimpulkan "hijau".
+**Fix:** `scripts/mutation-check.py` — HANYA memakai exit code. Ini pelajaran
+ketiga yang sama di satu sesi: `| tail` (exit code tail), pao berbohong (B7),
+dan tanpa-TTY (B10). **Exit code adalah satu-satunya sinyal yang tidak bisa bohong.**
 
 ### B5 — Test bot-discard di UserAgentParser tidak menguji apa pun
 **Dampak:** mutasi "bot tidak lagi dibuang lebih dulu" tetap HIJAU — artinya test itu

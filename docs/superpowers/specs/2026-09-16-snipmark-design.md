@@ -122,6 +122,7 @@ Diuji dengan test yang menyuntik kode duplikat dan membuktikan retry-nya bekerja
 id              BIGINT UNSIGNED PK
 link_id         BIGINT UNSIGNED FK → links.id (cascade)
 occurred_at     DATETIME(3)      -- UTC, milidetik
+occurred_on     DATE NOT NULL    -- tanggal zona Asia/Jakarta, TERSIMPAN & TER-INDEX
 visitor_hash    CHAR(64)         -- HMAC-SHA256(ip|Y-m-d, APP_KEY) — BUKAN IP
 referrer_host   VARCHAR(255) NULL
 user_agent      VARCHAR(512) NULL     -- UA mentah, dipotong 512 char (lihat catatan)
@@ -132,9 +133,24 @@ is_bot          BOOLEAN NOT NULL
 bot_name        VARCHAR(32) NULL
 bot_category    ENUM('search','scraper','seo','monitor','chat_preview','feed','unknown') NULL
 source          ENUM('web','curl','sdk','api') NOT NULL DEFAULT 'web'
-INDEX(link_id, occurred_at)
-INDEX(occurred_at)              -- untuk rollup per-hari lintas link
+INDEX(link_id, occurred_on)            -- index utama rollup harian
+INDEX(occurred_on)                     -- sweep lintas link untuk satu hari
+INDEX(link_id, visitor_hash, occurred_on)
 ```
+
+**Amandemen skema #1 — `occurred_on` (ditemukan saat mendesain rollup, bukan di draft awal).**
+Rollup membutuhkan agregasi per hari. Menulisnya sebagai `GROUP BY DATE(occurred_at)`
+menempatkan **fungsi di atas kolom**, sehingga MariaDB tidak bisa memakai index:
+hasilnya full table scan + filesort pada tabel yang memang dirancang tumbuh ke jutaan
+baris. Kesalahan ini **tidak terlihat di database kecil** dan baru muncul sebagai
+"dashboard lambat" setelah terlambat diperbaiki. Karena itu tanggal zona analitik
+disimpan sebagai kolom sendiri dan diindeks. Diuji oleh `SchemaTest`.
+
+**Amandemen skema #2 — pemotongan `user_agent` di model.**
+Kolom dibatasi 512 karakter, tetapi UA lebih panjang itu nyata (browser dengan banyak
+ekstensi). Tanpa pemotongan, MariaDB menolak insert dengan `Data too long for column`
+→ **redirect gagal HTTP 500**. Pemotongan dilakukan di satu tempat (mutator model),
+bukan diserahkan ke setiap pemanggil. Ditemukan oleh test, bukan review.
 **Tidak ada kolom `ip`.** Namun `user_agent` **mentah disimpan** (dipotong 512 char).
 
 **Alasan menyimpan UA mentah (keputusan user, 2026-09-16).** Hasil parsing
