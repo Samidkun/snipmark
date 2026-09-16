@@ -495,6 +495,37 @@ retry, jadi biayanya jatuh ke DB.
   "password/secret" di `laravel.log` ternyata hanya nama parameter `$secret` pada
   pesan error; 10 file `storage/` di history ternyata placeholder `.gitignore`.
 
+### B34 — Gate `perf` selalu merah + `a11y` tidak terlaporkan (local-ci.sh FULL)
+**Ditemukan saat:** menjalankan `local-ci.sh` FULL untuk **pertama kali**. Selama
+ini hanya `--fast` yang pernah dipakai, jadi gate `perf` tidak pernah benar-benar dieksekusi.
+**Masalah 1 — gate `perf` merah SELAMANYA:** `.lighthouserc.json` menunjuk
+`http://localhost:3000/` — itu port Vite/Next, **bukan** Laravel. Lighthouse
+menabrak halaman error → `CHROME_INTERSTITIAL_ERROR` → `FAIL perf` setiap kali.
+Gate yang tidak bisa hijau sama buruknya dengan gate yang tidak bisa merah.
+**Masalah 2 — Lighthouse dijalankan tanpa server hidup:** `local-ci.sh` memanggil
+`lhci` tanpa memastikan ada yang melayani URL-nya.
+**Masalah 3 — `a11y` tidak terlaporkan:** `e2e/a11y.spec.ts` ada dan dijalankan,
+tapi tenggelam di dalam gate `e2e` → kegagalan aksesibilitas terbaca sebagai
+"e2e gagal", bukan "a11y gagal".
+**Fix:** URL → `http://127.0.0.1:8899/`; `local-ci.sh` menyalakan server Laravel
+di :8899 dengan **health-check** (bukan `sleep` buta) lalu mematikannya; `a11y`
+jadi gate tersendiri.
+**Bukti:** sebelum `FAIL perf`; sesudah **`LOCAL-CI: ALL GREEN`** (12 gate).
+Lighthouse nyata: **performance 100 · accessibility 100 · LCP 1.2s · CLS 0 · TBT 0ms**.
+**Pelajaran:** "belum pernah dijalankan penuh" adalah status yang menipu. Gate yang
+hanya pernah di-skip belum terbukti apa pun. Jalankan gate terberat minimal sekali.
+
+## Drift dokumen-vs-kode (bukan bug, tapi perlu keputusan)
+Audit menyeluruh nama kelas di spec vs kode menemukan **1 drift nyata**:
+`LinkPolicy` disebut spec §10 ("Ownership ditegakkan **hanya** di `LinkPolicy`"),
+tetapi **tidak ada**. Implementasinya: pengecekan kepemilikan **diduplikasi** di
+dua tempat (`TautanIndex::tautanMilikSaya()` dan `AnalitikTautan`), keduanya
+`abort(403)`. **Fungsinya benar** (IDOR terbukti 403 lintas-user), tetapi
+duplikasi berarti komponen ketiga bisa lupa memeriksa → IDOR.
+Dua penamaan lain yang disebut spec tapi tidak ada — **bukan masalah**:
+`InsertClickEvent` (fungsinya ada: `ClickRecorder::record()` → `ClickEvent::create()`
+sinkron) dan `DataProvider` (atribut PHPUnit, bukan kelas aplikasi).
+
 ## Yang belum dikerjakan (jujur)
 
 1. ~~`UserAgentParser` dan `VisitorHasher`~~ → **selesai** (Sesi 1)
@@ -503,5 +534,6 @@ retry, jadi biayanya jatuh ke DB.
 4. ~~E2E~~ → **selesai**: 12 test hijau (8 smoke + 4 analytics), terbukti bisa gagal
 5. ~~Sesi 5~~ → **selesai**: 8 ADR, runbook, user-guide, UAT, rehearsal produksi
 6. Manual steps factory: belum ada git remote (CI GitHub diam) → `scripts/local-ci.sh`
-7. `local-ci.sh` **full** (e2e/a11y/perf) belum pernah dijalankan sekaligus
+7. ~~`local-ci.sh` full belum pernah dijalankan~~ → **selesai** (B34 diperbaiki, ALL GREEN 12 gate)
 8. ~~Halaman analytics belum diuji E2E~~ → **selesai** (`e2e/analytics.spec.ts`, 4 test)
+9. **`LinkPolicy` tidak ada** (spec §10 menyebutnya) — kepemilikan diduplikasi di 2 komponen. Fungsi benar, tapi rawan bila ada komponen ke-3
