@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
 /**
@@ -40,6 +41,24 @@ class Link extends Model
         'is_active',
         'expires_at',
     ];
+
+    /**
+     * Membatalkan cache jalur redirect.
+     *
+     * Tanpa ini, mengganti destination TIDAK berlaku sampai TTL kedaluwarsa —
+     * dan pada tabel yang isinya URL, "perubahan tidak terasa" itu bug.
+     */
+    protected static function booted(): void
+    {
+        static::saved(fn (self $link) => self::flushCodeCache($link->code));
+        static::deleted(fn (self $link) => self::flushCodeCache($link->code));
+        static::restored(fn (self $link) => self::flushCodeCache($link->code));
+    }
+
+    public static function flushCodeCache(string $code): void
+    {
+        Cache::forget('snip:url:'.$code);
+    }
 
     protected function casts(): array
     {
