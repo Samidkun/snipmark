@@ -15,8 +15,8 @@
 | 4 — Plan | ⏭️ | **Di-skip dengan persetujuan user** — spec §14 = rencana |
 | 5 — Workspace | ✅ | `main`, solo + T1 → tanpa worktree (ruling R4 run sebelumnya) |
 | 6 — TDD | ✅ | 229 test / 627 assertions, 29/29 mutasi |
-| 7 — Execute | 🔄 **Sesi 2 hampir selesai** | mesin rollup + commands + seeder + benchmark |
-| 8–16 | ⬜ | |
+| 7 — Execute | ✅ | Sesi 1–3: analytics + rollup + redirect |
+| 8–16 | ⬜ | UI (Sesi 4), docs+E2E (Sesi 5) |
 
 ---
 
@@ -38,8 +38,8 @@
 | `ClickEvent` (append-only, UA truncate) | ✅ | mutator + test |
 | `LinkDailyRollup` | ✅ | UNIQUE(link,date) teruji |
 
-**Test:** 229 passed / 627 assertions
-**Mutation check:** 29/29 terdeteksi (19 + 10 analytics)
+**Test:** 309 passed / 817 assertions
+**Mutation check:** 43/43 terdeteksi (19 + 12 analytics + 12 redirect)
 **Gate lokal:** `local-ci.sh --fast` → **ALL GREEN**
 
 ---
@@ -225,6 +225,54 @@ daripada sync pada satu node tanpa Redis (dua INSERT + serialisasi + polling unt
 pekerjaan milidetik). Batch 52× lebih cepat — menunjukkan biaya sebenarnya adalah
 perjalanan bolak-balik per pernyataan, bukan "INSERT itu mahal".
 Ditulis lengkap di `docs/benchmarks.md`, termasuk batas yang TIDAK diukur.
+
+## Sesi 3 — Jalur redirect
+
+| Deliverable | Bukti |
+|---|---|
+| `GET /c/{code}` → 302 | diuji; **302 bukan 301** (ADR-0006) |
+| Counter atomik | diuji lewat **SQL yang dieksekusi** (`DB::listen`), bukan `DB::increment()` langsung |
+| Cache + invalidation | hit = nol query DB; `saved/deleted/restored` membersihkan |
+| `DestinationValidator` | javascript:/data:/file:, loopback, RFC1918, metadata cloud, IPv6 ULA |
+| `CidrMatcher` | IPv4+IPv6, IP tidak sah SELALU non-cocok |
+| Shadow-mode bot | rate limit + CIDR + token UA; dicatat, **tidak** memblokir |
+| 404 / 410 | kode tak dikenal vs link kedaluwarsa |
+
+**Verifikasi end-to-end di server nyata** (`php artisan serve`, bukan hanya test):
+```
+klik browser  -> 302 ke destination, referrer google.com, desktop/chrome, hash 64 char
+klik curl     -> 302, ditandai is_bot=1 bot_name=curl
+kode ngawur   -> 404
+rollup        -> 12 baris, by_browser {"safari":34,...}, reconcile -> BERSIH
+```
+
+### B22 — `reconcile --fix` tidak pernah bisa bersih (self-healing palsu)
+**Dampak:** perintah melaporkan "MASIH ada drift setelah --fix" selamanya.
+**Penyebab:** `rollupDay()` adalah fungsi dari `click_events`, tetapi baris rollup
+untuk link yang event-nya sudah hilang tidak pernah dihapus. `reconcile`
+membandingkan rollup vs event nyata → selisihnya dilaporkan sebagai drift yang sama,
+terus-menerus.
+**Perbaikan pertama saya SALAH** (hanya menangani "hari kosong total"). Pada data
+nyata tanggal itu masih punya event untuk link LAIN, jadi jalur purge tidak pernah
+jalan. Perbaikan benar: purge di SETIAP `rollupDay` dengan `whereNotIn` link yang
+punya event.
+**Ditemukan lewat:** pemakaian nyata (seeder dijalankan ulang dengan rentang berbeda)
+— **bukan** oleh test, walaupun saat itu ada 229 test hijau.
+**Bukti:** sebelum `fix exit=1` → "MASIH ada drift"; sesudah `fix exit=0` →
+verifikasi ulang `exit=0` → "Bersih — tidak ada drift."
+**Pelajaran:** command yang JUJUR melaporkan kegagalannya adalah yang membuat bug ini
+ketemu. Kalau `reconcile` menelan drift dan keluar 0, data rusak akan terlihat sehat.
+
+### B23 — Output test meledak 257 KB
+**Dampak:** satu kegagalan membawa stack trace 60+ frame; output 257 KB membanjiri
+konteks sampai kerja terhenti.
+**Fix:** `tests-summary.py` membatasi keluaran keras < 3800 karakter.
+
+### B24 — Saya mengulang kesalahan `| tail` (ketiga kalinya)
+**Dampak:** `reconcile --last-7-days | tail` melaporkan `exit=0` padahal drift ada.
+**Bukti:** dijalankan tanpa pipe → `exit code SEBENARNYA = 1`.
+**Pelajaran:** sudah tiga kali di sesi ini (`| tail`, pao, subprocess tanpa TTY).
+Aturannya satu: **exit code dari proses itu sendiri, tidak pernah dari pipe.**
 
 ## Yang belum dikerjakan (jujur)
 
