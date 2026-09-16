@@ -14,8 +14,9 @@
 | 3 — Spec | ✅ | 473 baris, self-review menemukan 5 masalah, diperbaiki |
 | 4 — Plan | ⏭️ | **Di-skip dengan persetujuan user** — spec §14 = rencana |
 | 5 — Workspace | ✅ | `main`, solo + T1 → tanpa worktree (ruling R4 run sebelumnya) |
-| 6 — TDD | 🔄 **sedang jalan** | Sesi 1 |
-| 7–16 | ⬜ | |
+| 6 — TDD | ✅ | 229 test / 627 assertions, 29/29 mutasi |
+| 7 — Execute | 🔄 **Sesi 2 hampir selesai** | mesin rollup + commands + seeder + benchmark |
+| 8–16 | ⬜ | |
 
 ---
 
@@ -37,8 +38,8 @@
 | `ClickEvent` (append-only, UA truncate) | ✅ | mutator + test |
 | `LinkDailyRollup` | ✅ | UNIQUE(link,date) teruji |
 
-**Test:** 176 passed / 484 assertions
-**Mutation check:** 19/19 terdeteksi
+**Test:** 229 passed / 627 assertions
+**Mutation check:** 29/29 terdeteksi (19 + 10 analytics)
 **Gate lokal:** `local-ci.sh --fast` → **ALL GREEN**
 
 ---
@@ -101,6 +102,41 @@ tulis di phpunit.xml), warning itu membuat proses keluar 1.
 variabel undefined sehingga test GAGAL beneran — itu bukan B7). Reproduksi yang benar
 memerlukan body yang **tidak** menyentuh param ekstra, sehingga test tetap lolos
 dan hanya warning yang tersisa.
+
+### B11 — Kelas "murni" memanggil `config()` → tidak bisa diuji tanpa boot Laravel
+**Dampak:** 11 test gagal dengan `Target class [config] does not exist`.
+**Penyebab:** `DayWindow` (yang diklaim murni) memanggil `config()`. Klaim "murni" itu bohong.
+**Fix:** konstanta `DayWindow::DEFAULT_TIMEZONE`; pemanggil aplikasi meneruskan nilai
+secara eksplisit. Sekarang benar-benar murni dan bisa diuji tanpa framework.
+
+### B12 — `reconcile()` mengembalikan snapshot SEBELUM perbaikan
+**Dampak:** perintah melaporkan "masih ada drift" setelah `--fix` berhasil —
+**laporan yang berbohong**, dan exit code 1 padahal sudah bersih.
+**Fix:** kontrak eksplisit — `drifts` = yang DITEMUKAN, `fixed` = jumlah ditangani,
+dan kebersihan dibuktikan dengan pemanggilan KEDUA. Diuji, bukan dijelaskan.
+
+### B13 — `parent::__construct()` pada Seeder
+**Dampak:** `Cannot call constructor` — seeder tidak bisa dijalankan sama sekali.
+**Penyebab:** `Illuminate\Database\Seeder` TIDAK punya constructor. Saya menulis
+`parent::__construct()` karena mengasumsikan ada (kebiasaan dari kelas lain).
+**Fix:** constructor sendiri tanpa `parent::`, dan output lewat callable `$log`
+(karena `$this->command` juga null bila seeder dipanggil langsung).
+
+### B14 — `getmtmax()` tidak ada di PHP
+**Dampak:** fatal error saat seeding. Nama fungsi yang benar `mt_getrandmax()`.
+**Penyebab:** saya menulis nama fungsi dari ingatan, bukan dari dokumentasi.
+**Kelas yang sama dengan B1 (API Fortify) dan B13 (constructor Seeder):**
+**menebak API adalah sumber bug, bukan mengetahuinya.**
+
+### B15 — `firstOrCreate(['code' => 'bench001'])` → kolom `CHAR(7)` ditolak
+**Dampak:** benchmark gagal start. `'bench001'` = 8 karakter.
+**Penyebab:** nilai contoh yang ditulis tanpa menghitung panjang terhadap skema.
+**Fix:** pakai link yang sudah ada / `createWithUniqueCode()`.
+
+### B16 — Mutasi skrip sendiri bikin SYNTAX ERROR, bukan mutasi logika
+**Dampak:** 1 mutasi "terdeteksi" karena PHP crash — itu bukan bukti test punya gigi.
+**Fix:** mutasi diganti `continue;` (sintaks sah, logika hilang). Sekarang 10/10
+mutasi analytics terdeteksi secara SEMANTIK.
 
 ### B8 — Mutation check menemukan 2 mutasi lolos: `isReachable()` TANPA TEST SAMA SEKALI
 **Dampak:** logika kelayakan-redirect (aktif + belum kedaluwarsa) tidak dilindungi
@@ -173,6 +209,22 @@ tidak terbukti mengubah berkas.
 - **R11** Sesi 1 di `main`, tanpa worktree (solo + T1).
 
 ---
+
+## Sesi 2 — Benchmark NYATA (S13)
+
+```
+php artisan snipmark:bench:click-logging --iterations=1000 --rounds=3
+
+sync  (1 INSERT/klik)              median  991,4 ms  →  1.009 klik/detik
+queue (database, via worker)       median 10389,5 ms →     96 klik/detik
+batch (insertAll)                  median    19,1 ms → 52.260 klik/detik
+```
+
+**Hipotesis terbukti, besaran lebih besar dari dugaan:** queue **10,5× LEBIH LAMBAT**
+daripada sync pada satu node tanpa Redis (dua INSERT + serialisasi + polling untuk
+pekerjaan milidetik). Batch 52× lebih cepat — menunjukkan biaya sebenarnya adalah
+perjalanan bolak-balik per pernyataan, bukan "INSERT itu mahal".
+Ditulis lengkap di `docs/benchmarks.md`, termasuk batas yang TIDAK diukur.
 
 ## Yang belum dikerjakan (jujur)
 

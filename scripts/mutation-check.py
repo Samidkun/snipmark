@@ -55,6 +55,79 @@ GROUPS = {
         ("app/Support/VisitorHasher.php", "guard secret kosong dihapus",
          "        if (trim($secret) === '') {", "        if (false) {"),
     ],
+    "analytics": [
+        (
+            "app/Services/RollupService.php",
+            "upsert -> insert biasa (idempotensi MATI: run ke-2 duplikat/error)",
+            """                LinkDailyRollup::query()->updateOrCreate(
+                    ['link_id' => $id, 'date' => $localDate],
+                    [
+                        ...$result->toArray(),
+                        'computed_at' => $now,
+                    ],
+                );""",
+            """                LinkDailyRollup::query()->create([
+                    'link_id' => $id,
+                    'date' => $localDate,
+                    ...$result->toArray(),
+                    'computed_at' => $now,
+                ]);""",
+        ),
+        (
+            "app/Services/RollupService.php",
+            "rollup filter pakai tanggal UTC (bug 1-hari WIB)",
+            "->where('occurred_on', $localDate);",
+            "->whereDate('occurred_at', $localDate);",
+        ),
+        (
+            "app/Support/Analytics/RollupAggregator.php",
+            "flag is_bot diabaikan (bot dihitung sebagai manusia)",
+            "            $isBot = (bool) ($row['is_bot'] ?? false);",
+            "            $isBot = false;",
+        ),
+        (
+            "app/Services/RollupService.php",
+            "reconcile buta terhadap counter",
+            "->havingRaw('links.total_clicks <> COUNT(click_events.id)');",
+            "->havingRaw('1 = 0');",
+        ),
+        (
+            "app/Services/RollupService.php",
+            "reconcile buta terhadap rollup basi",
+            "->havingRaw('r.total <> COUNT(e.id)');",
+            "->havingRaw('1 = 0');",
+        ),
+        (
+            "app/Services/RollupService.php",
+            "perbaikan rollup basi dilewati (sintaks tetap sah, logika hilang)",
+            "            foreach ($tanggalRusak as $date) {\n                $service->rollupDay($date);\n            }",
+            "            foreach ($tanggalRusak as $date) {\n                continue;\n            }",
+        ),
+        (
+            "app/Support/Analytics/RollupAggregator.php",
+            "dimensi tidak dipotong ke 25 (JSON bengkak)",
+            "        if (count($counts) <= LinkDailyRollup::MAX_DIMENSION_KEYS) {\n            return $counts;\n        }",
+            "        if (false) {\n            return $counts;\n        }",
+        ),
+        (
+            "app/Support/Analytics/RollupAggregator.php",
+            "referrer www. tidak dinormalisasi",
+            "        if (str_starts_with($s, 'www.')) {\n            $s = substr($s, 4);\n        }",
+            "        // normalisasi www. dihapus",
+        ),
+        (
+            "app/Support/Analytics/RollupAggregator.php",
+            "unique visitor tidak distinct (hash di-overwrite, dihitung per event)",
+            "            if ($hash !== '') {\n                $humanHashes[$hash] = true;\n            }",
+            "            if ($hash !== '') {\n                $humanHashes[] = $hash;\n            }",
+        ),
+        (
+            "app/Console/Commands/RollupReconcileCommand.php",
+            "exit code 0 walau drift masih ada",
+            "            $this->components->warn('Jalankan ulang dengan --fix untuk memperbaiki.');\n\n            return self::FAILURE;",
+            "            $this->components->warn('Jalankan ulang dengan --fix untuk memperbaiki.');\n\n            return self::SUCCESS;",
+        ),
+    ],
     "model": [
         ("app/Models/Link.php", "retry dihapus (exception dilempar langsung)",
          "            } catch (QueryException $e) {\n                // 23000 = integrity constraint violation. Kalau yang ditabrak bukan\n                // `code`, retry tidak akan menolong: lempar apa adanya.\n                if (! static::isCodeCollision($e)) {\n                    throw $e;\n                }\n            }",
