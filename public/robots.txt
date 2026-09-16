@@ -1,2 +1,10 @@
+# Snipmark tidak diindeks: setiap halaman di luar landing bersifat privat, dan
+# tautan pendek milik pengguna tidak boleh muncul di mesin pencari.
 User-agent: *
-Disallow:
+Disallow: /dashboard
+Disallow: /c/
+
+Allow: /$
+Allow: /favicon.svg
+
+Sitemap: /sitemap.xml

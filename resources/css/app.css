@@ -2,8 +2,209 @@
 
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
 @source '../../storage/framework/views/*.php';
+@source '../../app/Livewire/**/*.php';
 
+/*
+ * DESIGN TOKENS (spec §9) — dark-first.
+ *
+ * Aturan yang dipegang di seluruh UI:
+ *  - Latar #0B0F14, BUKAN #000 pekat (dilarang: flat pure-black primary)
+ *  - Warna hanya dari token ini; tidak ada hex liar di komponen
+ *  - Radius 8px kartu / 6px kontrol, skala spasi 4px
+ *  - Aksen teal untuk aksi utama, amber untuk peringatan, merah untuk bahaya
+ */
 @theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
-        'Segoe UI Symbol', 'Noto Color Emoji';
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: ui-monospace, 'JetBrains Mono', 'SFMono-Regular', Menlo, monospace;
+
+    /* permukaan */
+    --color-ink-950: #0b0f14;   /* latar halaman */
+    --color-ink-900: #0f151c;   /* latar sidebar */
+    --color-ink-850: #131a22;   /* permukaan kartu */
+    --color-ink-800: #1a232c;   /* permukaan terangkat */
+    --color-ink-700: #1f2937;   /* garis */
+
+    /* teks */
+    --color-fg-100: #e6edf3;    /* utama */
+    --color-fg-300: #b6c2cf;    /* sekunder */
+    --color-fg-500: #93a1b0;    /* redup / label */
+    --color-fg-700: #5b6875;    /* paling redup */
+
+    /* aksen */
+    --color-accent-300: #5eead4;
+    --color-accent-400: #2dd4bf;  /* aksi utama */
+    --color-accent-500: #14b8a6;
+    --color-accent-600: #0d9488;
+
+    --color-warn-400: #fbbf24;
+    --color-warn-500: #f59e0b;
+
+    --color-danger-400: #f87171;
+    --color-danger-500: #ef4444;
+
+    --radius-card: 8px;
+    --radius-control: 6px;
+}
+
+/* Fokus harus SELALU terlihat (a11y, spec §9). */
+@layer base {
+    :focus-visible {
+        outline: 2px solid var(--color-accent-400);
+        outline-offset: 2px;
+        border-radius: 2px;
+    }
+
+    html {
+        color-scheme: dark;
+    }
+
+    body {
+        background-color: var(--color-ink-950);
+        color: var(--color-fg-100);
+        -webkit-font-smoothing: antialiased;
+    }
+
+    /* Hormati preferensi pengguna (spec §9 a11y). */
+    @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+            scroll-behavior: auto !important;
+        }
+    }
+}
+
+@layer components {
+    /* Target sentuh minimal 44px di mobile (spec §9). */
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        min-height: 44px;
+        padding: 0 1rem;
+        border-radius: var(--radius-control);
+        font-weight: 500;
+        font-size: 0.875rem;
+        transition: background-color 150ms ease, border-color 150ms ease;
+        cursor: pointer;
+    }
+
+    .btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+
+    .btn-primary {
+        background-color: var(--color-accent-500);
+        color: var(--color-ink-950);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+        background-color: var(--color-accent-400);
+    }
+
+    .btn-ghost {
+        background-color: transparent;
+        color: var(--color-fg-300);
+        border: 1px solid var(--color-ink-700);
+    }
+
+    .btn-ghost:hover:not(:disabled) {
+        background-color: var(--color-ink-800);
+        color: var(--color-fg-100);
+    }
+
+    .btn-danger {
+        background-color: transparent;
+        color: var(--color-danger-400);
+        border: 1px solid var(--color-danger-500);
+    }
+
+    .btn-danger:hover:not(:disabled) {
+        background-color: color-mix(in srgb, var(--color-danger-500) 18%, transparent);
+    }
+
+    .card {
+        background-color: var(--color-ink-850);
+        border: 1px solid var(--color-ink-700);
+        border-radius: var(--radius-card);
+    }
+
+    .field {
+        width: 100%;
+        min-height: 44px;
+        padding: 0.5rem 0.75rem;
+        background-color: var(--color-ink-900);
+        border: 1px solid var(--color-ink-700);
+        border-radius: var(--radius-control);
+        color: var(--color-fg-100);
+        font-size: 0.875rem;
+    }
+
+    .field::placeholder {
+        color: var(--color-fg-700);
+    }
+
+    .label {
+        display: block;
+        margin-bottom: 0.375rem;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        color: var(--color-fg-300);
+    }
+
+    .hint {
+        margin-top: 0.375rem;
+        font-size: 0.75rem;
+        color: var(--color-fg-500);
+    }
+
+    .error-text {
+        margin-top: 0.375rem;
+        font-size: 0.75rem;
+        color: var(--color-danger-400);
+    }
+
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.125rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.6875rem;
+        font-weight: 500;
+        border: 1px solid var(--color-ink-700);
+        color: var(--color-fg-300);
+    }
+
+    .badge-accent {
+        border-color: color-mix(in srgb, var(--color-accent-400) 45%, transparent);
+        color: var(--color-accent-300);
+    }
+
+    .badge-warn {
+        border-color: color-mix(in srgb, var(--color-warn-400) 45%, transparent);
+        color: var(--color-warn-400);
+    }
+
+    .skeleton {
+        background: linear-gradient(
+            90deg,
+            var(--color-ink-800) 25%,
+            var(--color-ink-700) 50%,
+            var(--color-ink-800) 75%
+        );
+        background-size: 200% 100%;
+        animation: skeleton-shimmer 1.4s ease-in-out infinite;
+        border-radius: var(--radius-control);
+    }
+
+    @keyframes skeleton-shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
 }
