@@ -7,6 +7,7 @@ use App\Models\Link;
 use App\Support\DestinationValidator;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
@@ -174,17 +175,21 @@ class TautanIndex extends Component
     /**
      * Mengambil tautan milik pengguna ATAU gagal dengan 403.
      *
-     * `abort(403)` dipilih daripada mengembalikan null, supaya percobaan menyentuh
-     * data orang lain terlihat sebagai kesalahan — bukan sunyi yang menyembunyikan
-     * bug otorisasi.
+     * Otorisasi didelegasikan ke `LinkPolicy` (spec §10: satu sumber kebenaran).
+     * Sebelumnya aturan `user_id !== auth()->id()` ditulis di sini DAN di
+     * `AnalitikTautan` — duplikasi yang membuat komponen ke-3 bisa lupa memeriksa.
+     *
+     * `Gate::authorize()` melempar `AuthorizationException` (-> 403) bila bukan
+     * pemilik. 403 dipilih daripada null supaya percobaan menyentuh data orang
+     * lain terlihat sebagai kesalahan — bukan sunyi yang menyembunyikan bug.
+     * Id yang tidak ada -> 404 lewat `firstOrFail()` (bukan 403): tidak ada
+     * kepemilikan yang bisa dilanggar, dan 404 adalah jawaban yang jujur.
      */
     private function tautanMilikSaya(int $id): Link
     {
-        $link = Link::query()->whereKey($id)->first();
+        $link = Link::query()->whereKey($id)->firstOrFail();
 
-        if ($link === null || $link->user_id !== auth()->id()) {
-            abort(403);
-        }
+        Gate::authorize('update', $link);
 
         return $link;
     }

@@ -9,6 +9,7 @@ use App\Support\Analytics\DayWindow;
 use App\Support\Analytics\Sparkline;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -44,10 +45,9 @@ class AnalitikTautan extends Component
 
     public function mount(Link $link): void
     {
-        // Otorisasi: halaman ini hanya untuk pemiliknya (spec §10).
-        if ($link->user_id !== auth()->id()) {
-            abort(403);
-        }
+        // Otorisasi didelegasikan ke LinkPolicy (spec §10). Aturan kepemilikan
+        // hidup di SATU tempat, bukan disalin di sini dan di TautanIndex.
+        Gate::authorize('view', $link);
 
         $this->link = $link;
 
