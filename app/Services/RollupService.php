@@ -71,14 +71,13 @@ final class RollupService
             $grouped[$row->link_id][] = (array) $row;
         }
 
-        if ($grouped === []) {
-            return 0;
-        }
-
         $now = CarbonImmutable::now('UTC');
         $written = 0;
+        // Link yang TIDAK muncul di sini untuk tanggal ini sudah tidak punya event,
+        // sehingga baris rollup-nya basi dan harus dihapus.
+        $linkDenganEvent = array_keys($grouped);
 
-        DB::transaction(function () use ($grouped, $localDate, $now, &$written) {
+        DB::transaction(function () use ($grouped, $localDate, $now, $linkId, $linkDenganEvent, &$written) {
             foreach ($grouped as $id => $events) {
                 $result = $this->aggregator->aggregate($events);
 
@@ -95,6 +94,8 @@ final class RollupService
 
                 $written++;
             }
+
+            $this->purgeStale($localDate, $linkId, $linkDenganEvent);
         });
 
         return $written;
@@ -252,5 +253,39 @@ final class RollupService
     private function timezone(): string
     {
         return config('snipmark.analytics_timezone', DayWindow::DEFAULT_TIMEZONE);
+    }
+
+    /**
+     * Menghapus baris rollup basi untuk tanggal ini.
+     *
+     * `rollupDay()` adalah FUNGSI dari `click_events`: hasilnya harus sama dengan
+     * apa yang ada di sumbernya sekarang. Bila event sebuah link untuk tanggal itu
+     * sudah tidak ada, baris rollup-nya WAJIB hilang.
+     *
+     * Tanpa ini, `reconcile` — yang membandingkan rollup terhadap event nyata —
+     * akan melaporkan drift yang sama SELAMANYA, dan `--fix` tidak akan pernah
+     * bisa membuatnya bersih.
+     *
+     * BUG B22, ditemukan lewat pemakaian nyata (seeder dijalankan ulang dengan
+     * rentang berbeda), bukan lewat test. Versi pertama perbaikan saya hanya
+     * menangani kasus "hari kosong TOTAL", sehingga hari yang masih punya event
+     * untuk link lain tetap menyisakan baris basi.
+     *
+     * @param  list<int|string>  $linkDenganEvent  link yang punya event pada tanggal ini
+     * @return int jumlah baris yang dihapus
+     */
+    private function purgeStale(string $localDate, ?int $linkId, array $linkDenganEvent = []): int
+    {
+        $q = LinkDailyRollup::query()->whereDate('date', $localDate);
+
+        if ($linkId !== null) {
+            $q->where('link_id', $linkId);
+        }
+
+        if ($linkDenganEvent !== []) {
+            $q->whereNotIn('link_id', $linkDenganEvent);
+        }
+
+        return $q->delete();
     }
 }

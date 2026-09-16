@@ -124,6 +124,51 @@ final class RollupServiceTest extends TestCase
             'rollup menciptakan baris nol untuk hari tanpa data — tumpukan sampah');
     }
 
+    /**
+     * BUG B22 — ditemukan lewat penggunaan nyata, bukan test:
+     * `rollupDay()` pada hari yang event-nya sudah TIDAK ADA harus MENGHAPUS
+     * baris rollup basi. Kalau tidak, `reconcile --fix` melaporkan
+     * "MASIH ada drift setelah --fix" selamanya, karena rollup menyimpan
+     * masa lalu yang sudah tidak ada di sumbernya.
+     */
+    public function test_rollup_hari_kosong_menghapus_baris_basi(): void
+    {
+        $link = $this->link();
+        $this->click($link, '2026-09-16 02:00:00');
+
+        $this->service->rollupDay('2026-09-16');
+        self::assertSame(1, LinkDailyRollup::count());
+
+        // Sumbernya hilang (mis. retensi data / import ulang).
+        ClickEvent::query()->delete();
+
+        $this->service->rollupDay('2026-09-16');
+
+        self::assertSame(0, LinkDailyRollup::count(),
+            'rollup basi tidak dihapus — rollup bukan fungsi dari sumbernya lagi');
+    }
+
+    /** Setelah purge, reconcile harus benar-benar bersih (self-healing nyata). */
+    public function test_reconcile_fix_benar_benar_membersihkan_setelah_sumber_hilang(): void
+    {
+        $link = $this->link();
+        $this->click($link, '2026-09-16 02:00:00');
+        $this->service->rollupDay('2026-09-16');
+
+        ClickEvent::query()->delete();
+        DB::table('links')->where('id', $link->id)->update(['total_clicks' => 5]);
+
+        $laporan = $this->service->reconcile('2026-09-16', '2026-09-16', fix: true);
+        self::assertGreaterThan(0, $laporan->fixed);
+
+        // Ini yang GAGAL sebelum B22 diperbaiki.
+        self::assertTrue(
+            $this->service->reconcile('2026-09-16', '2026-09-16')->isClean(),
+            'setelah --fix masih ada drift: rollup basi tidak dibersihkan'
+        );
+        self::assertSame(0, (int) DB::table('links')->where('id', $link->id)->value('total_clicks'));
+    }
+
     // ------------------------------------------------- S4: IDEMPOTEN (inti §5.1)
 
     /**

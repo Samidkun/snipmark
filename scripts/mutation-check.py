@@ -99,6 +99,18 @@ GROUPS = {
         ),
         (
             "app/Services/RollupService.php",
+            "purge baris basi dilewati (B22: reconcile tak pernah bisa bersih)",
+            "            $this->purgeStale($localDate, $linkId, $linkDenganEvent);",
+            "            // purge dihapus",
+        ),
+        (
+            "app/Services/RollupService.php",
+            "purge hanya menangani hari kosong total (versi bug B22)",
+            "        if ($linkDenganEvent !== []) {\n            $q->whereNotIn('link_id', $linkDenganEvent);\n        }",
+            "        if (false) {\n            $q->whereNotIn('link_id', $linkDenganEvent);\n        }",
+        ),
+        (
+            "app/Services/RollupService.php",
             "perbaikan rollup basi dilewati (sintaks tetap sah, logika hilang)",
             "            foreach ($tanggalRusak as $date) {\n                $service->rollupDay($date);\n            }",
             "            foreach ($tanggalRusak as $date) {\n                continue;\n            }",
