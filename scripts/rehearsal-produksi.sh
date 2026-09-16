@@ -68,15 +68,17 @@ done
 
 echo
 echo "── 6. Nonce CSP konsisten (SATU request, bukan dua) ──"
-RESP=$(curl -s -D - --max-time 5 "http://127.0.0.1:$PORT/login")
-H=$(printf '%s' "$RESP" | grep -oiE '^Content-Security-Policy:.*' | grep -oiE 'nonce-[A-Za-z0-9]+' | head -1 | sed 's/nonce-//i')
-TAGS=$(printf '%s' "$RESP" | grep -oE '<script[^>]*>' | wc -l)
-OK=$(printf '%s' "$RESP" | grep -oE '<script[^>]*>' | grep -c "nonce=\"$H\"")
+RESPF=$(mktemp)
+curl -s -D - --max-time 5 "http://127.0.0.1:$PORT/login" -o "$RESPF.body" | tee "$RESPF" > /dev/null
+H=$(grep -oiE '^Content-Security-Policy:.*' "$RESPF" | grep -oiE 'nonce-[A-Za-z0-9]+' | head -1 | sed 's/nonce-//i')
+TAGS=$(grep -oE '<script[^>]*>' "$RESPF.body" | wc -l)
+OK=$(grep -oE '<script[^>]*>' "$RESPF.body" | grep -c "nonce=\"$H\"")
 if [ "$TAGS" -gt 0 ] && [ "$TAGS" = "$OK" ]; then
   lapor "nonce ($OK/$TAGS script cocok)" "✅"
 else
   lapor "nonce" "❌ ($OK dari $TAGS script)"; GAGAL=1
 fi
+rm -f "$RESPF" "$RESPF.body"
 
 echo
 echo "── 7. 404 tidak membocorkan apa pun ──"
@@ -91,53 +93,69 @@ echo
 echo "── 8. LOGIN + DASHBOARD di konfigurasi produksi ──"
 echo "     (di sinilah bug #26/#27 muncul: halaman kosong / tombol mati)"
 JAR=$(mktemp)
-PAGE=$(curl -s -c "$JAR" --max-time 5 "http://127.0.0.1:$PORT/login")
-TOKEN=$(printf '%s' "$PAGE" | grep -oE 'name="_token"[^>]*value="[^"]+"' | head -1 | sed -E 's/.*value="([^"]+)".*/\1/')
+PAGEF=$(mktemp)
+curl -s -c "$JAR" --max-time 5 "http://127.0.0.1:$PORT/login" -o "$PAGEF"
+TOKEN=$(grep -oE 'name="_token"[^>]*value="[^"]+"' "$PAGEF" | head -1 | sed -E 's/.*value="([^"]+)".*/\1/')
 
 if [ -z "$TOKEN" ]; then
   lapor "token CSRF di /login" "❌ tidak ditemukan"; GAGAL=1
 else
-  LOGIN=$(curl -s -b "$JAR" -c "$JAR" -o /dev/null -w "%{http_code}" --max-time 5 \
+  LOGIN=$(curl -s -b "$JAR" -c "$JAR" -o /tmp/reh_login.html -w "%{http_code}" --max-time 5 \
     -X POST "http://127.0.0.1:$PORT/login" \
     --data-urlencode "_token=$TOKEN" \
     --data-urlencode "email=demo@snipmark.test" \
     --data-urlencode "password=password")
   if [ "$LOGIN" = "302" ]; then
     lapor "POST /login" "✅ 302"
+  elif [ "$LOGIN" = "429" ]; then
+    # Throttle Fortify (5 percobaan/menit per IP). Ini BUKAN kegagalan aplikasi —
+    # tetapi juga bukan "hijau". Dilaporkan sebagai GAGAL agar tidak ada yang
+    # menyimpulkan dashboard sehat dari login yang tidak pernah terjadi.
+    lapor "POST /login" "⚠️  HTTP 429 (throttle Fortify) — tunggu 60 detik, ulangi"
+    GAGAL=1
   else
     lapor "POST /login" "❌ HTTP $LOGIN"; GAGAL=1
   fi
 
-  DASH=$(curl -s -b "$JAR" --max-time 5 "http://127.0.0.1:$PORT/dashboard")
+  DASHFILE=$(mktemp)
+  curl -s -b "$JAR" --max-time 5 "http://127.0.0.1:$PORT/dashboard" -o "$DASHFILE"
+  DASH=$(cat "$DASHFILE")
 
-  # B26: komponen Livewire harus benar-benar ter-render (bukan halaman kosong)
-  if printf '%s' "$DASH" | grep -q 'wire:snapshot'; then
-    lapor "dashboard: komponen ter-render" "✅"
+  # Penjaga terhadap kesimpulan palsu: bila login TIDAK berhasil, halaman yang
+  # diterima adalah halaman login — dan grep "wire:snapshot tidak ada" akan
+  # melaporkan bug B26 yang tidak ada. Pastikan dulu kita memang di dashboard.
+  if grep -qE 'name="email"|Masuk</button>' "$DASHFILE"; then
+    lapor "dashboard: sesi login" "❌ diarahkan ke /login — bukan dashboard"; GAGAL=1
   else
-    lapor "dashboard: komponen ter-render" "❌ wire:snapshot tidak ada (B26)"; GAGAL=1
-  fi
-
-  # B28: tombol aksi harus ada, kalau tidak pengguna tak bisa membuat tautan
-  if printf '%s' "$DASH" | grep -q 'Buat tautan'; then
-    lapor "dashboard: tombol Buat tautan" "✅"
-  else
-    lapor "dashboard: tombol Buat tautan" "❌ tidak ada (B28)"; GAGAL=1
-  fi
-
-  # B27: bundle Livewire harus CSP-safe di konfigurasi produksi
-  LWURL=$(printf '%s' "$DASH" | grep -oE '/livewire-[a-f0-9]+/livewire[^"]*\.js[^"]*' | head -1)
-  if [ -n "$LWURL" ]; then
-    LWSIZE=$(curl -s --max-time 5 "http://127.0.0.1:$PORT$LWURL" | wc -c)
-    if [ "$LWSIZE" -gt 1000 ]; then
-      lapor "dashboard: bundle Livewire ($LWSIZE byte)" "✅"
+    # B26: komponen Livewire harus benar-benar ter-render (bukan halaman kosong)
+    if grep -q 'wire:snapshot' "$DASHFILE"; then
+      lapor "dashboard: komponen ter-render" "✅"
     else
-      lapor "dashboard: bundle Livewire" "❌ body $LWSIZE byte (fetch gagal)"; GAGAL=1
+      lapor "dashboard: komponen ter-render" "❌ wire:snapshot tidak ada (B26)"; GAGAL=1
     fi
-  else
-    lapor "dashboard: bundle Livewire" "❌ URL tidak ditemukan"; GAGAL=1
+
+    # B28: tombol aksi harus ada, kalau tidak pengguna tak bisa membuat tautan
+    if grep -q 'Buat tautan' "$DASHFILE"; then
+      lapor "dashboard: tombol Buat tautan" "✅"
+    else
+      lapor "dashboard: tombol Buat tautan" "❌ tidak ada (B28)"; GAGAL=1
+    fi
+
+    # B27: bundle Livewire harus CSP-safe di konfigurasi produksi
+    LWURL=$(grep -oE '/livewire-[a-f0-9]+/livewire[^"]*\.js[^"]*' "$DASHFILE" | head -1)
+    if [ -n "$LWURL" ]; then
+      LWSIZE=$(curl -s --max-time 5 "http://127.0.0.1:$PORT$LWURL" | wc -c)
+      if [ "$LWSIZE" -gt 1000 ]; then
+        lapor "dashboard: bundle Livewire ($LWSIZE byte)" "✅"
+      else
+        lapor "dashboard: bundle Livewire" "❌ body $LWSIZE byte (fetch gagal)"; GAGAL=1
+      fi
+    else
+      lapor "dashboard: bundle Livewire" "❌ URL tidak ditemukan"; GAGAL=1
+    fi
   fi
 fi
-rm -f "$JAR"
+rm -f "$JAR" "$DASHFILE" "$PAGEF"
 
 kill $SRV 2>/dev/null || true
 wait $SRV 2>/dev/null || true
