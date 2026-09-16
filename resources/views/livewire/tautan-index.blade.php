@@ -1,4 +1,28 @@
 <div>
+    {{--
+        HEADER DI DALAM KOMPONEN, bukan di layout.
+
+        Komponen Livewire full-page tidak bisa mengisi `@yield` milik layout
+        (`@yield` hanya menerima `@section` dari view yang `@extends`). Sebelumnya
+        judul dan tombol "+ Buat" didefinisikan di layout, sehingga yang tampil
+        hanyalah judul default dan tombolnya dibuang — pengguna tidak punya cara
+        membuat tautan sama sekali.
+
+        Tombol "+ Buat" sekarang SELALU ada, bukan hanya di empty-state: tanpa
+        itu, pengguna yang sudah punya tautan tidak punya jalan menambah lagi.
+    --}}
+    <header class="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+            <h1 class="text-xl font-semibold tracking-tight sm:text-2xl">Tautan</h1>
+            <p class="mt-1 text-sm text-fg-500">
+                Pemendek tautan dengan analitik yang jujur — bot dihitung terpisah.
+            </p>
+        </div>
+        <button type="button" wire:click="bukaBuat" class="btn btn-primary">
+            Buat tautan
+        </button>
+    </header>
+
     {{-- ============================== RINGKASAN ============================== --}}
     <div class="mb-6 grid gap-3 sm:grid-cols-3">
         <div class="card p-4">
@@ -40,7 +64,7 @@
                 <p class="text-sm text-fg-300">Belum ada tautan.</p>
                 <p class="hint">Buat tautan pertama Anda — analitiknya akan langsung mulai bekerja.</p>
                 <button type="button" wire:click="bukaBuat" class="btn btn-primary mt-4">
-                    Buat tautan
+                    Buat tautan pertama
                 </button>
             @endif
         </div>

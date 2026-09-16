@@ -97,17 +97,67 @@
                 </div>
             @endif
 
-            <header class="mb-6 flex flex-wrap items-start justify-between gap-4">
-                <div>
-                    <h1 class="text-xl font-semibold tracking-tight sm:text-2xl">@yield('heading', 'Tautan')</h1>
-                    @hasSection('subheading')
-                        <p class="mt-1 text-sm text-fg-500">@yield('subheading')</p>
-                    @endif
-                </div>
-                @yield('actions')
-            </header>
+            {{--
+                Header HANYA dirender bila halaman benar-benar mendefinisikannya
+                lewat `@section('heading')` / `@section('actions')` — yaitu
+                halaman auth yang memakai `@extends`.
 
-            @yield('content')
+                Kenapa tidak boleh ada nilai default di sini: komponen Livewire
+                full-page TIDAK BISA mengisi `@yield`. `@yield` hanya menerima
+                isi dari `@section` milik view yang `@extends`. Jadi ketika
+                layout memberi default `@yield('heading', 'Tautan')`, setiap
+                halaman Livewire menampilkan judul "Tautan" yang tidak pernah
+                diminta komponennya — dan tombol aksi yang didefinisikan di
+                dalam komponen DIBUANG tanpa peringatan.
+
+                Akibat nyatanya: tombol "+ Buat" tidak pernah muncul di dasbor,
+                sehingga pengguna tidak punya cara membuat tautan sama sekali.
+                Judul dan tombol kini berada DI DALAM komponen
+                (resources/views/livewire/tautan-index.blade.php), karena di
+                situlah Livewire benar-benar merender.
+            --}}
+            @hasSection('heading')
+                <header class="mb-6 flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <h1 class="text-xl font-semibold tracking-tight sm:text-2xl">@yield('heading')</h1>
+                        @hasSection('subheading')
+                            <p class="mt-1 text-sm text-fg-500">@yield('subheading')</p>
+                        @endif
+                    </div>
+                    @yield('actions')
+                </header>
+            @endif
+
+            {{--
+                TIGA JALUR RENDER, dan layout ini harus melayani semuanya:
+
+                1. View Blade biasa (`@extends` + `@section('content')`)
+                   — dipakai halaman auth (login, register, lupa-sandi).
+                2. Livewire full-page lewat VIEW layout (`#[Layout('layouts.app')]`)
+                   — dipakai dashboard dan analytics.
+                3. Komponen Blade (`<x-layouts.app>`), bila suatu saat dipakai.
+
+                Kenapa ketiganya perlu ditangani, dan kenapa ini bukan kode berlebihan:
+
+                Livewire membungkus komponen full-page dengan mengisi
+                `@section($slotOrSection)`, dan NILAI DEFAULT `slotOrSection`
+                adalah string 'slot' — bukan 'content'. Jadi Livewire mengisi
+                `@section('slot')`. Layout yang hanya menyediakan `@yield('content')`
+                akan membuang hasil render komponen TANPA error apa pun: halaman
+                tampil sebagai layout kosong (sidebar + judul saja).
+
+                Itulah bug yang tidak tertangkap 343 test PHPUnit, karena
+                `Livewire::test(Komponen::class)` memanggil komponen secara
+                langsung dan tidak pernah menyentuh layout. Hanya E2E di browser
+                nyata yang memperlihatkannya.
+            --}}
+            @hasSection('content')
+                @yield('content')
+            @elseif (isset($slot) && trim((string) $slot) !== '')
+                {{ $slot }}
+            @else
+                @yield('slot')
+            @endif
         </div>
     </main>
 </div>
