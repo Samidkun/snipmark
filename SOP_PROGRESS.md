@@ -14,9 +14,9 @@
 | 3 — Spec | ✅ | 473 baris, self-review menemukan 5 masalah, diperbaiki |
 | 4 — Plan | ⏭️ | **Di-skip dengan persetujuan user** — spec §14 = rencana |
 | 5 — Workspace | ✅ | `main`, solo + T1 → tanpa worktree (ruling R4 run sebelumnya) |
-| 6 — TDD | ✅ | 229 test / 627 assertions, 29/29 mutasi |
-| 7 — Execute | ✅ | Sesi 1–3: analytics + rollup + redirect |
-| 8–16 | ⬜ | UI (Sesi 4), docs+E2E (Sesi 5) |
+| 6 — TDD | ✅ | 349 test / 938 assertions, mutasi terdeteksi |
+| 7 — Execute | ✅ | Sesi 1–4: analytics + rollup + redirect + UI |
+| 8–16 | ⬜ | Sesi 5: docs + E2E + UAT + production rehearsal |
 
 ---
 
@@ -274,12 +274,43 @@ konteks sampai kerja terhenti.
 **Pelajaran:** sudah tiga kali di sesi ini (`| tail`, pao, subprocess tanpa TTY).
 Aturannya satu: **exit code dari proses itu sendiri, tidak pernah dari pipe.**
 
+### B25 — CSP nonce berbeda antara header dan HTML (bug #19, terulang)
+**Dampak:** halaman tetap HTTP 200, HTML tampak benar, TANPA error di layar — tetapi
+browser memblokir setiap `<script>` inline. Livewire tidak pernah boot: **semua tombol
+mati**, form tidak submit, filter tidak jalan. Ini kegagalan paling menipu yang ada,
+karena tidak ada satu sinyal pun di UI yang menunjuk ke sana.
+**Penyebab:** nonce dibuat di `AuthViewServiceProvider::boot()`. `boot()` berjalan
+**SEKALI per aplikasi**, bukan per request — jadi nilai nonce dibuat pada waktu yang
+berbeda dari saat HTML dirender. Header CSP membaca nilai terakhir, HTML memakai nilai
+lain.
+**Gejala yang menyesatkan:** membandingkan `curl -sI` (HEAD) dengan `curl -s` (GET)
+memberi dua nonce berbeda — dan itu **sah**, karena dua request berbeda. Kesimpulan
+"nonce beda" dari perbandingan itu **palsu**; alat ukurnya yang salah, bukan kodenya.
+**Fix:** nonce dibuat di `SecurityHeaders` — sekali per request, disimpan ke container +
+`Vite::useCspNonce()` **sebelum** `$next()`, sehingga view dan header membaca nilai yang
+sama. Pembuatan nonce dihapus dari provider (tempat salah).
+**Bukti terverifikasi di halaman Livewire nyata** (`/dashboard`, satu request):
+```
+nonce header CSP   : N0HwFg8ZXLFtGQJyIelrniw9
+script Vite        : nonce="N0HwFg8ZXLFtGQJyIelrniw9"  ✅
+script Livewire    : nonce="N0HwFg8ZXLFtGQJyIelrniw9"  ✅
+2 script ber-nonce · 0 tanpa nonce
+```
+**Dibuktikan bisa gagal:** menyuntikkan kembali bug → 2 test MERAH dengan pesan yang
+menunjuk bug #19 eksplisit. Test `SecurityHeadersTest` membandingkan nonce header vs
+SETIAP tag `<script>` pada response yang **sama** (6 test, 21 assertions).
+**Pelajaran:** (1) nonce CSP itu per-request, bukan per-aplikasi — provider adalah
+tempat yang salah. (2) Alat ukur harus diuji sebelum kesimpulannya dipercaya; dua
+request berbeda memang menghasilkan nonce berbeda.
+
 ## Yang belum dikerjakan (jujur)
 
-1. `UserAgentParser` dan `VisitorHasher` — sisa Sesi 1
-2. Migrasi 3 tabel (`links`, `click_events`, `link_daily_rollups`)
-3. Sesi 2–5: rollup engine, redirect path, UI, docs + E2E + rehearsal
-4. Manual steps factory: belum ada git remote (CI diam) → `scripts/local-ci.sh` dipakai
-5. ~~`local-ci.sh` belum dijalankan~~ → **sudah: ALL GREEN (--fast)**
-6. `local-ci.sh` **full** (dengan e2e/a11y/perf) belum pernah dijalankan
-7. E2E belum ada satupun test yang berjalan (baru scaffold)
+1. ~~`UserAgentParser` dan `VisitorHasher`~~ → **selesai** (Sesi 1)
+2. ~~Migrasi 3 tabel~~ → **selesai** (Sesi 2)
+3. ~~Sesi 2–4: rollup engine, redirect path, UI~~ → **selesai**
+4. **Sesi 5** — satu-satunya yang tersisa: 2 ADR (dari 7), `docs/runbook`, E2E
+   (masih scaffold kosong), UAT, production rehearsal
+5. Manual steps factory: belum ada git remote (CI GitHub diam) → `scripts/local-ci.sh`
+6. `local-ci.sh` **full** (e2e/a11y/perf) belum pernah dijalankan — E2E belum ada isinya
+7. Halaman auth baru diperiksa lewat HTML/header, **belum** lewat browser nyata
+   (`browser_exec` butuh approval manual)
