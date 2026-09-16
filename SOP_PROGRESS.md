@@ -28,9 +28,15 @@
 | `.gitignore` menutup SEMUA varian `.env` | ✅ | `git ls-files` → hanya `.env.example` |
 | Secret gate terbukti memblokir | ✅ | 2 skenario (staged + staged-blob) DITOLAK |
 | `App\Support\BotVerdict` | ✅ | 99 test |
-| `App\Support\BotDetector` | ✅ | 95 test: 38 UA bot + 10 UA manusia |
+| `App\Support\BotDetector` | ✅ | 38 UA bot + 10 UA manusia |
+| `App\Support\ParsedUserAgent` | ✅ | bucket + enum sinkron |
+| `App\Support\UserAgentParser` | ✅ | 13 UA nyata + 5 jebakan urutan |
+| `App\Support\VisitorHasher` | ✅ | HMAC, rotasi harian, bukan digest polos |
+| Migrasi 3 tabel | ⬜ | sesi berikutnya |
 
-**Test:** 99 passed / 281 assertions / ~8ms
+**Test:** 147 passed / 432 assertions
+**Mutation check:** 13/13 terdeteksi (BotDetector 4/4, Support classes 9/9)
+**Gate lokal:** `local-ci.sh --fast` → **ALL GREEN**
 
 ---
 
@@ -59,6 +65,56 @@ disimpulkan test-nya lulus-palsu. **Padahal mutasinya tidak pernah diterapkan**:
 benar-benar berubah** (`assert changed`) sebelum menjalankan test.
 **Pelajaran:** "test tetap hijau" hanya bermakna jika mutasinya terbukti diterapkan.
 Sama kelasnya dengan gate yang memeriksa objek yang salah.
+
+### B7 — ⚠️ REPORTER BAWAAN LARAVEL 13 MELAPORKAN "passed" UNTUK SUITE YANG EXIT CODE-NYA 1
+**Dampak:** kalau hanya membaca output `php artisan test`, seluruh suite bisa
+dilaporkan hijau sementara gate-nya merah. **Ini kelas kegagalan yang didefinisikan
+SOP sendiri: gate yang melaporkan sukses tanpa benar-benar lolos.** Persis bug #24
+dari run reference-tracker, tapi dengan mekanisme berbeda.
+
+**Reproduksi (terverifikasi, `scripts/prove-reporter-can-lie.py`):**
+```
+exit code proses : 1
+JSON mengklaim   : passed
+PAO_DISABLE=1    : Tests: 1 warning, 147 passed (393 assertions)
+```
+
+**Akar masalah:** `laravel/pao` ("Agent-optimized output for PHP testing tools") adalah
+dev-dependency BAWAAN skeleton Laravel 13. Ia mendeteksi agent lewat
+`AgentDetector::detect()`, mengganti output PHPUnit dengan JSON, dan JSON-nya hanya
+menyimpulkan dari jumlah test — bukan dari exit code. Dipicu oleh PHPUnit **warning**:
+method test hanya menerima 1 argumen sementara dataset berisi 4
+(`test_keluaran_selalu_nilai_enum_yang_sah`). Karena `failOnWarning="true"` (yang saya
+tulis di phpunit.xml), warning itu membuat proses keluar 1.
+
+**Fix:**
+1. Signature test menampung seluruh argumen dataset — warning hilang (fix akarnya).
+2. `scripts/tests-summary.py` menerima exit code proses dan **menolak mengklaim hijau
+   bila exit code bukan 0**, walau JSON bilang "passed". Ada test regresinya.
+3. `scripts/run-tests.sh` — jalur standar: exit code diambil dari proses test,
+   bukan dari `tail` (rangkaian `... | tail` memberi exit code milik `tail`).
+
+**Koreksi diri:** mutasi pertama saya salah mereproduksi bug (body-nya menyentuh
+variabel undefined sehingga test GAGAL beneran — itu bukan B7). Reproduksi yang benar
+memerlukan body yang **tidak** menyentuh param ekstra, sehingga test tetap lolos
+dan hanya warning yang tersisa.
+
+### B5 — Test bot-discard di UserAgentParser tidak menguji apa pun
+**Dampak:** mutasi "bot tidak lagi dibuang lebih dulu" tetap HIJAU — artinya test itu
+tidak melindungi apa pun.
+**Penyebab:** test memakai `curl/8.4.0`, yang memang tidak memuat satu pun tanda
+browser. Hasilnya 'other' baik bot-discard ada maupun tidak. Test itu menguji nol.
+**Fix:** diganti dengan `HeadlessChrome/120` dan `Googlebot` yang UA-nya MEMUAT
+"Chrome/", "Safari/", "Windows", "Mozilla/5.0" — bot yang menyamar sebagai browser.
+Tanpa bot-discard, traffic ini tercatat "desktop chrome windows" tanpa satu error pun.
+**Bukti:** mutasi yang sama sekarang MERAH.
+
+### B6 — Skrip mutasi sendiri punya bug (mutasi tidak diterapkan)
+**Dampak:** 1 mutasi dilaporkan SKIP karena pola tidak ditemukan.
+**Penyebab:** `"\$this->botDetector"` di dalam string Python — `\$` bukan escape sah,
+sehingga polanya tidak pernah cocok.
+**Fix:** raw string (`r"..."`). Skrip sekarang MENOLAK mengklaim hasil bila mutasi
+tidak terbukti mengubah berkas.
 
 ### B4 — 2 lubang cakupan NYATA ditemukan oleh mutation check
 | Mutasi | Hasil | Lubang yang terbuka |
@@ -96,4 +152,6 @@ Sama kelasnya dengan gate yang memeriksa objek yang salah.
 2. Migrasi 3 tabel (`links`, `click_events`, `link_daily_rollups`)
 3. Sesi 2–5: rollup engine, redirect path, UI, docs + E2E + rehearsal
 4. Manual steps factory: belum ada git remote (CI diam) → `scripts/local-ci.sh` dipakai
-5. `local-ci.sh` belum dijalankan sekali pun
+5. ~~`local-ci.sh` belum dijalankan~~ → **sudah: ALL GREEN (--fast)**
+6. `local-ci.sh` **full** (dengan e2e/a11y/perf) belum pernah dijalankan
+7. E2E belum ada satupun test yang berjalan (baru scaffold)

@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\ParsedUserAgent;
 use App\Support\UserAgentParser;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -95,14 +96,33 @@ final class UserAgentParserTest extends TestCase
     }
 
     /** Semua keluaran harus ada di enum skema — nilai asing akan ditolak MariaDB. */
+    /**
+     * Menjaga DUA hal sekaligus, karena enum MariaDB menolak nilai asing DI LUAR
+     * test: kegagalannya baru terlihat saat insert, yaitu di produksi.
+     *
+     * (a) keluaran parser selalu anggota enum yang sah
+     * (b) dataset uji itu sendiri selalu anggota enum yang sah
+     *
+     * Signature WAJIB menampung seluruh argumen dataset. Kalau tidak, PHPUnit 12
+     * mengeluarkan warning, dan `failOnWarning="true"` membuat suite keluar dengan
+     * exit 1 — sementara reporter bawaan mencetak "passed". (Bug B7.)
+     */
     #[DataProvider('realUserAgents')]
-    public function test_keluaran_selalu_nilai_enum_yang_sah(string $ua): void
-    {
+    public function test_keluaran_selalu_nilai_enum_yang_sah(
+        string $ua,
+        string $expectedDevice,
+        string $expectedBrowser,
+        string $expectedOs,
+    ): void {
         $p = $this->parser->parse($ua);
 
-        self::assertContains($p->device, ['mobile', 'tablet', 'desktop', 'other']);
-        self::assertContains($p->browser, ['chrome', 'safari', 'firefox', 'edge', 'opera', 'samsung', 'other']);
-        self::assertContains($p->os, ['windows', 'macos', 'linux', 'android', 'ios', 'other']);
+        self::assertContains($p->device, ParsedUserAgent::DEVICES, "device tak dikenal: {$p->device}");
+        self::assertContains($p->browser, ParsedUserAgent::BROWSERS, "browser tak dikenal: {$p->browser}");
+        self::assertContains($p->os, ParsedUserAgent::OSES, "os tak dikenal: {$p->os}");
+
+        self::assertContains($expectedDevice, ParsedUserAgent::DEVICES);
+        self::assertContains($expectedBrowser, ParsedUserAgent::BROWSERS);
+        self::assertContains($expectedOs, ParsedUserAgent::OSES);
     }
 
     /**
