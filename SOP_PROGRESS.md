@@ -14,7 +14,7 @@
 | 3 — Spec | ✅ | 473 baris, self-review menemukan 5 masalah, diperbaiki |
 | 4 — Plan | ⏭️ | **Di-skip dengan persetujuan user** — spec §14 = rencana |
 | 5 — Workspace | ✅ | `main`, solo + T1 → tanpa worktree (ruling R4 run sebelumnya) |
-| 6 — TDD | ✅ | 349 test / 938 assertions, mutasi terdeteksi |
+| 6 — TDD | ✅ | 360 test / 971 assertions, mutasi terdeteksi |
 | 7 — Execute | ✅ | Sesi 1–4: analytics + rollup + redirect + UI |
 | 8 — E2E | ✅ | 12 test Playwright hijau (login, CRUD, analytics, CSP, a11y) |
 | 9 — Rehearsal Produksi | ✅ | 20 gerbang lulus, APP_DEBUG=false + cache produksi, 3× berturut deterministik |
@@ -464,6 +464,36 @@ tidak ditemukan review kode + test suite 349 hijau.
 | XSS via scheme | ✅ `javascript:`/`data:`/`vbscript:` ditolak |
 | **SSRF via IP obfuscation** | ❌→✅ **B32 diperbaiki** |
 | Open redirect | ✅ tidak ada (hanya `/c/{code}` → destination tersimpan) |
+
+### B33 — Pembuatan tautan tanpa batas laju (abuse lokal)
+**Dampak:** Satu akun bisa membanjiri tabel `links` tanpa henti. Jalur redirect
+sudah dibatasi (shadow mode, 60/menit per `visitor_hash`), tapi pembuatan tautan
+sama sekali tidak — dan tiap pembuatan memicu `createWithUniqueCode` dengan
+retry, jadi biayanya jatuh ke DB.
+**Keputusan desain (semua diuji):**
+- **Hanya pembuatan** yang dibatasi. Mengubah tautan tidak menambah baris; memblokirnya
+  hanya mengunci pengguna dari tautannya sendiri.
+- Kuota diperiksa **setelah** validasi dan di-`hit()` **setelah** baris tersimpan —
+  supaya percobaan yang ditolak validasi tidak memakan kuota.
+- Key **per pengguna** (`buat-tautan:{id}`), bukan global: batas satu akun tidak
+  boleh menghukum akun lain.
+- Default 60/menit via `SNIPMARK_LINK_CREATE_RATE_LIMIT`.
+**TDD:** 2 test MERAH dulu, lalu hijau (360 test total).
+**Mutation check (3 mutasi, semua terdeteksi):**
+| Mutasi | Test merah |
+|---|---|
+| `tooManyAttempts` → `false` | 2 |
+| key global (bukan per pengguna) | 1 |
+| `hit()` dipanggil sebelum validasi | 4 |
+
+### Pengerasan lokal lain (Sesi 5)
+- `.env` diperketat ke **600** (sebelumnya 644 → terbaca semua user mesin).
+  Diverifikasi `.env` tidak ter-track (`.gitignore` baris 1).
+- Audit ulang: **tidak ada** kredensial di kode, **tidak ada** backup `.env` nyasar,
+  file storage di git history hanya placeholder `.gitignore`.
+- **False positive yang ditemukan** (pola B29/B31, gate sendiri): 24 match
+  "password/secret" di `laravel.log` ternyata hanya nama parameter `$secret` pada
+  pesan error; 10 file `storage/` di history ternyata placeholder `.gitignore`.
 
 ## Yang belum dikerjakan (jujur)
 
