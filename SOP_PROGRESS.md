@@ -431,6 +431,40 @@ dashboard tanpa tombol).
 (1) deterministik? (2) bisa gagal? `grep -q` di dalam pipeline ber-`pipefail`
 adalah jebakan klasik; `grep -q` pada file aman.
 
+### B32 — IPv4 ter-obfuscation lolos guard `destination` (ditemukan lewat sapuan)
+**Dampak:** Lima bentuk loopback **LULUS** `DestinationValidator` padahal browser
+membukanya sebagai `127.0.0.1`:
+```
+http://2130706433/     desimal      http://127.1/    bentuk pendek
+http://0x7f000001/     hex          http://0/       0.0.0.0 bentuk pendek
+http://017700000001/   oktal
+```
+**Akar masalah:** `filter_var($host, FILTER_VALIDATE_IP)` menolak semua bentuk itu
+sebagai "bukan IP" → hostname dianggap publik & aman. Padahal WHATWG URL
+(yang dipakai browser) menormalkannya ke loopback. Dibuktikan:
+`new URL('http://2130706433/').hostname === '127.0.0.1'`.
+**Kenapa lolos review:** test lama memakai `http://0.0.0.0/` (bentuk penuh, tertolak)
+— tidak ada test untuk bentuk ter-obfuscation. Kode terlihat benar karena
+komentarnya menyebut "SSRF pivot" dan "169.254.169.254".
+**Fix:** `normalizeIpv4()` mengikuti algoritma IPv4 parser WHATWG (hex/oktal/
+desimal, bentuk pendek, batas oktet) sebelum pemeriksaan rentang.
+**TDD:** 7 test MERAH dulu, lalu hijau (356 test total). Regresi: URL sah
+(IPv4 publik, port, userinfo, IDN) tetap lulus.
+**Pelajaran:** "kode terlihat aman" bukan bukti. Guard trust boundary harus
+**ditembak payload**, bukan dibaca. Uji tembak menemukan dalam 5 menit apa yang
+tidak ditemukan review kode + test suite 349 hijau.
+
+### Hasil sapuan keamanan (Sesi 5)
+| Area | Hasil |
+|---|---|
+| `.env` di git | ✅ bersih (hanya `.env.example`; APP_KEY kosong) |
+| IP mentah di DB | ✅ tidak ada; `visitor_hash` HMAC dipakai |
+| Sisa mutasi | ✅ tidak ada (`csp_safe=true`, nonce per-request) |
+| **IDOR** | ✅ **terbukti aman** — A minta `/dashboard/{link-B}` → **403** |
+| XSS via scheme | ✅ `javascript:`/`data:`/`vbscript:` ditolak |
+| **SSRF via IP obfuscation** | ❌→✅ **B32 diperbaiki** |
+| Open redirect | ✅ tidak ada (hanya `/c/{code}` → destination tersimpan) |
+
 ## Yang belum dikerjakan (jujur)
 
 1. ~~`UserAgentParser` dan `VisitorHasher`~~ → **selesai** (Sesi 1)
