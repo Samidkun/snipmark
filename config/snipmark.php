@@ -16,6 +16,15 @@ return [
     'redirect_rate_limit' => (int) env('SNIPMARK_REDIRECT_RATE_LIMIT', 60),
 
     /*
+     * Batas laju PEMBUATAN tautan, per pengguna terautentikasi (per menit).
+     * Berbeda dari redirect_rate_limit: yang ini MENEGAKKAN (bukan shadow mode),
+     * karena tanpa batas satu akun bisa membanjiri tabel `links` tanpa henti.
+     * Hanya berlaku untuk pembuatan — mengubah tautan tidak menambah baris dan
+     * tidak dihitung. Percobaan yang ditolak validasi juga tidak memakan kuota.
+     */
+    'link_create_rate_limit' => (int) env('SNIPMARK_LINK_CREATE_RATE_LIMIT', 60),
+
+    /*
      * Enforcement bot. Default false (spec §6.3): deteksi dicatat, tidak memblokir.
      * Alasan: memblokir berdasarkan CIDR pusat data bisa memblokir penguji sendiri,
      * kantor ber-NAT, dan pengguna VPN sah — pada aplikasi demo itu mengosongkan

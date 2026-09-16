@@ -158,6 +158,112 @@ final class TautanIndexTest extends TestCase
             ->assertSet('modalTerbuka', false);
     }
 
+    // ------------------------------------------------------------ rate limit
+
+    /**
+     * Pembuatan tautan dibatasi per pengguna. Tanpa batas ini, satu akun bisa
+     * membanjiri tabel `links` tanpa henti (abuse/spam) — dan karena kode dibuat
+     * unik dengan retry, biayanya jatuh ke DB.
+     */
+    public function test_membatasi_pembuatan_tautan_berlebihan(): void
+    {
+        config(['snipmark.link_create_rate_limit' => 3]);
+        $u = $this->user();
+
+        for ($i = 0; $i < 3; $i++) {
+            Livewire::actingAs($u)
+                ->test(TautanIndex::class)
+                ->set('destination', "https://contoh.test/{$i}")
+                ->call('simpan')
+                ->assertHasNoErrors();
+        }
+
+        self::assertSame(3, Link::query()->where('user_id', $u->id)->count());
+
+        // Percobaan ke-4 harus DITOLAK dan tidak menambah baris.
+        Livewire::actingAs($u)
+            ->test(TautanIndex::class)
+            ->set('destination', 'https://contoh.test/kelebihan')
+            ->call('simpan')
+            ->assertHasErrors('destination');
+
+        self::assertSame(3, Link::query()->where('user_id', $u->id)->count(),
+            'tautan di atas batas tidak boleh tersimpan');
+    }
+
+    /** Batas bersifat PER PENGGUNA: aktivitas user lain tidak boleh terdampak. */
+    public function test_batas_pembuatan_terpisah_per_pengguna(): void
+    {
+        config(['snipmark.link_create_rate_limit' => 1]);
+
+        $a = $this->user();
+        $b = $this->user();
+
+        Livewire::actingAs($a)->test(TautanIndex::class)
+            ->set('destination', 'https://a.test/1')->call('simpan')->assertHasNoErrors();
+
+        // A sudah kena batas.
+        Livewire::actingAs($a)->test(TautanIndex::class)
+            ->set('destination', 'https://a.test/2')->call('simpan')->assertHasErrors('destination');
+
+        // B belum, harus tetap bisa.
+        Livewire::actingAs($b)->test(TautanIndex::class)
+            ->set('destination', 'https://b.test/1')->call('simpan')->assertHasNoErrors();
+
+        self::assertSame(1, Link::query()->where('user_id', $b->id)->count());
+    }
+
+    /**
+     * Batas hanya berlaku untuk PEMBUATAN, bukan pengubahan. Mengubah tautan
+     * tidak menambah baris, jadi memblokirnya hanya akan mengunci pengguna
+     * dari tautannya sendiri saat ia sedang rajin mengedit.
+     */
+    public function test_batas_pembuatan_tidak_memblokir_pengubahan(): void
+    {
+        config(['snipmark.link_create_rate_limit' => 1]);
+        $u = $this->user();
+
+        $link = Link::factory()->create(['user_id' => $u->id, 'destination' => 'https://lama.test/x']);
+
+        // Habiskan kuota pembuatan.
+        Livewire::actingAs($u)->test(TautanIndex::class)
+            ->set('destination', 'https://baru-dibuat.test/1')->call('simpan')->assertHasNoErrors();
+
+        // Mengubah tautan lama harus TETAP berhasil.
+        Livewire::actingAs($u)->test(TautanIndex::class)
+            ->call('bukaUbah', $link->id)
+            ->set('destination', 'https://diubah.test/y')
+            ->call('simpan')
+            ->assertHasNoErrors();
+
+        self::assertSame('https://diubah.test/y', $link->fresh()->destination);
+    }
+
+    /** Tautan yang DITOLAK validasi tidak boleh ikut memakan kuota. */
+    public function test_destination_tidak_sah_tidak_memakan_kuota(): void
+    {
+        config(['snipmark.link_create_rate_limit' => 2]);
+        $u = $this->user();
+
+        // Dua percobaan tidak sah (tidak membuat baris).
+        for ($i = 0; $i < 2; $i++) {
+            Livewire::actingAs($u)->test(TautanIndex::class)
+                ->set('destination', 'javascript:alert(1)')
+                ->call('simpan')
+                ->assertHasErrors('destination');
+        }
+
+        // Kuota masih penuh: dua pembuatan sah harus berhasil.
+        for ($i = 0; $i < 2; $i++) {
+            Livewire::actingAs($u)->test(TautanIndex::class)
+                ->set('destination', "https://sah.test/{$i}")
+                ->call('simpan')
+                ->assertHasNoErrors();
+        }
+
+        self::assertSame(2, Link::query()->where('user_id', $u->id)->count());
+    }
+
     // ---------------------------------------------------------------- mengubah
 
     public function test_mengubah_tautan_milik_sendiri(): void

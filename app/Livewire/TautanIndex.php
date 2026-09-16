@@ -7,6 +7,7 @@ use App\Models\Link;
 use App\Support\DestinationValidator;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -120,11 +121,28 @@ class TautanIndex extends Component
 
             $pesan = 'Tautan diperbarui.';
         } else {
+            // Batas laju HANYA untuk pembuatan (menambah baris). Diperiksa setelah
+            // validasi supaya percobaan yang ditolak validasi tidak memakan kuota.
+            // Key per pengguna: batas satu akun tidak boleh menghukum akun lain.
+            $batas = max(1, (int) config('snipmark.link_create_rate_limit', 60));
+            $key = 'buat-tautan:'.auth()->id();
+
+            if (RateLimiter::tooManyAttempts($key, $batas)) {
+                $detik = RateLimiter::availableIn($key);
+
+                $this->addError('destination', "Terlalu banyak tautan dibuat. Coba lagi dalam {$detik} detik.");
+
+                return;
+            }
+
             // user_id dari SESI, tidak pernah dari input (spec §10).
             Link::createWithUniqueCode([
                 'user_id' => auth()->id(),
                 'destination' => $this->destination,
             ]);
+
+            // Kuota hanya terpakai setelah tautan benar-benar tersimpan.
+            RateLimiter::hit($key, 60);
 
             $pesan = 'Tautan dibuat.';
         }
