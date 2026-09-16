@@ -1,0 +1,112 @@
+name: CI
+on:
+  push: { branches: [main, master] }
+  pull_request:
+
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+
+  node:
+    runs-on: ubuntu-latest
+    if: hashFiles('package.json') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - name: Install
+        run: npm ci || npm install
+      - name: Lint
+        run: npm run --if-present lint
+      - name: Typecheck
+        run: npm run --if-present typecheck
+      - name: Test
+        run: npm run --if-present test
+      - name: Dependency audit (high/critical fails the build)
+        run: |
+          if [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; then
+            echo "::error::no lockfile — npm audit cannot run. Commit package-lock.json."
+            exit 1
+          fi
+          npm audit --audit-level=high
+      - name: License compliance (no GPL/AGPL in a shipped product)
+        run: npx --yes license-checker --production --failOn "GPL;AGPL"
+      - name: Build
+        run: npm run --if-present build
+
+  php:
+    runs-on: ubuntu-latest
+    if: hashFiles('composer.json') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with: { php-version: '8.3', tools: composer, coverage: none }
+      - name: Install
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Test
+        run: |
+          if [ -f artisan ]; then php artisan test; else vendor/bin/phpunit; fi
+      - name: Dependency audit (known CVEs fail the build)
+        run: composer audit --no-interaction
+
+  python:
+    runs-on: ubuntu-latest
+    if: hashFiles('pyproject.toml') != '' || hashFiles('requirements.txt') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Install
+        run: |
+          if [ -f pyproject.toml ]; then pip install -e .; else pip install -r requirements.txt; fi
+          pip install pip-audit
+      - name: Test
+        run: pytest -q
+      - name: Dependency audit (known CVEs fail the build)
+        run: pip-audit
+
+  e2e:
+    runs-on: ubuntu-latest
+    if: hashFiles('playwright.config.ts') != '' || hashFiles('playwright.config.js') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - name: Install
+        run: npm ci || npm install
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: E2E (drives the real UI)
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  web-quality:
+    runs-on: ubuntu-latest
+    needs: node
+    if: hashFiles('package.json') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - name: Install
+        run: npm ci || npm install
+      - name: Performance budget (Lighthouse CI)
+        if: hashFiles('.lighthouserc.json') != ''
+        run: npx --yes @lhci/cli autorun
+      - name: Accessibility (axe-core)
+        if: hashFiles('e2e/a11y.spec.ts') != ''
+        run: npx playwright test e2e/a11y.spec.ts
+
+  # Branch protection should require: secret-scan, node, php, python, e2e,
+  # web-quality. Every one of these CAN fail; none is a no-op that reports green.

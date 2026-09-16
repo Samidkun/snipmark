@@ -30,6 +30,7 @@ dan reconciliation**-nya.
 | S11 | CSP produksi tidak memblokir satu pun script inline Livewire | Rehearsal: console bersih (0 CSP violation) |
 | S12 | Suite E2E hijau terhadap build produksi | Rehearsal |
 | S13 | Benchmark sync-vs-queue terdokumentasi dengan angka nyata | `docs/benchmarks.md` + perintah reproducible |
+| S14 | `user_agent` mentah tersimpan untuk setiap event non-bot | PHPUnit (assert kolom terisi, dipotong 512) |
 
 **Definisi "selesai":** S1–S13 terbukti dengan output yang dibaca ulang, bukan diklaim.
 
@@ -123,6 +124,7 @@ link_id         BIGINT UNSIGNED FK → links.id (cascade)
 occurred_at     DATETIME(3)      -- UTC, milidetik
 visitor_hash    CHAR(64)         -- HMAC-SHA256(ip|Y-m-d, APP_KEY) — BUKAN IP
 referrer_host   VARCHAR(255) NULL
+user_agent      VARCHAR(512) NULL     -- UA mentah, dipotong 512 char (lihat catatan)
 device_type     ENUM('mobile','tablet','desktop','other') NOT NULL
 browser_family  VARCHAR(32) NOT NULL
 os_family       VARCHAR(32) NOT NULL
@@ -133,7 +135,25 @@ source          ENUM('web','curl','sdk','api') NOT NULL DEFAULT 'web'
 INDEX(link_id, occurred_at)
 INDEX(occurred_at)              -- untuk rollup per-hari lintas link
 ```
-**Tidak ada kolom `ip`.** Tidak ada `user_agent` mentah yang disimpan (hanya hasil parsing).
+**Tidak ada kolom `ip`.** Namun `user_agent` **mentah disimpan** (dipotong 512 char).
+
+**Alasan menyimpan UA mentah (keputusan user, 2026-09-16).** Hasil parsing
+(`device_type`, `browser_family`, `os_family`) adalah *turunan*. Jika parser punya bug,
+turunan itu salah di sumbernya, dan rollup §5 — yang idempoten terhadap `click_events` —
+hanya bisa menghitung ulang dari data yang sudah salah. Menyimpan UA mentah membuat
+seluruh riwayat **dapat diparse ulang** setelah parser diperbaiki
+(`snipmark:reparse-user-agents`). Ini yang membuat mesin rollup benar-benar dapat
+dipercaya, bukan hanya secara teori.
+
+**Konsekuensi privasi yang diterima secara sadar:** UA bukan pengenal pribadi
+(tidak ada IP, tidak ada cookie, tidak ada fingerprint gabungan), tetapi ia dapat
+mengungkap perangkat/bahasa/versi OS. Kebijakan: kolom ini **tidak pernah** ditampilkan
+di UI, tidak diekspor, dan dibatasi 512 karakter. `visitor_hash` tetap berotasi harian
+dan IP tetap tidak disimpan. Catat di ADR-0002.
+
+**Upgrade path:** `snipmark:reparse-user-agents` (recompute turunan dari UA mentah)
+tidak dibangun di v1; yang dibangun adalah kolomnya + dokumentasi bahwa ia ada untuk
+tujuan ini.
 
 ### 4.3 `link_daily_rollups`
 ```

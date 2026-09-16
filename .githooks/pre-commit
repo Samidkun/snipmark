@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Blocks: secrets (always) + lint/format when available.
+# FAIL-CLOSED on secrets: if no scanner can run, the commit is blocked.
+set -uo pipefail
+fail=0
+
+# --- secret scan ---
+#
+# Scans the STAGED BLOB, not the file on disk. git commits the index, and the
+# index can differ from the working tree: stage a file with a secret, "clean"
+# it in the editor, and a disk-scanning hook reads the clean copy while git
+# commits the secret. Verified: the disk-scanning version exited 0 and the
+# secret landed in history. secret_gate.py reads `git cat-file blob :path`.
+#
+# gitleaks is preferred when installed (it also reads staged content via
+# --staged). The bundled gate is the zero-install fallback and additionally
+# warns when the working copy still holds a secret the commit is not carrying.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --no-banner \
+    || { echo "BLOCKED: gitleaks found a secret"; fail=1; }
+else
+  gate="$(dirname "$0")/secret_gate.py"
+  if [ -f "$gate" ] && command -v python3 >/dev/null 2>&1; then
+    echo "note: gitleaks absent - using bundled secret_gate"
+    python3 "$gate" || { echo "BLOCKED: bundled gate found a possible secret"; fail=1; }
+  else
+    echo "BLOCKED: no secret scanner available (install gitleaks)"
+    fail=1
+  fi
+fi
+
+# --- lint when the project defines it ---
+if [ -f package.json ] && command -v npm >/dev/null 2>&1; then
+  if grep -q '"lint"' package.json 2>/dev/null; then
+    npm run --silent lint || { echo "BLOCKED: lint failed"; fail=1; }
+  fi
+fi
+
+exit $fail
